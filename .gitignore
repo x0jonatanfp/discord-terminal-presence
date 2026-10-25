@@ -1,0 +1,14 @@
+# Planes y artefactos efímeros de delegación
+tmp/
+
+# Configuración local (Application ID y ajustes por máquina)
+config.json
+
+# Dependencias (no se usan, pero por si acaso)
+node_modules/
+
+# Logs locales
+*.log
+
+# Metadatos locales de freebuff
+.freebuff/
