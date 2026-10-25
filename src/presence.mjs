@@ -11,9 +11,6 @@ function truncateUtf8(value, maxBytes = 128) {
 }
 
 const AGENT_LABELS = { claude: 'Claude', freebuff: 'Freebuff', opencode: 'OpenCode', codex: 'Codex' };
-const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
-const SEARCH_TOOLS = new Set(['Grep', 'Glob']);
-const BROWSING_TOOLS = new Set(['WebFetch', 'WebSearch']);
 
 function displayAgent(agent, command) {
   return AGENT_LABELS[agent] ?? (agent === 'shell' ? command : agent);
@@ -21,16 +18,8 @@ function displayAgent(agent, command) {
 
 function displayTool(tool, target) {
   if (typeof tool !== 'string' || !tool) return 'Idle';
-  const suffix = typeof target === 'string' && target ? ` ${target}` : '';
-  if (tool === 'Read') return `Reading${suffix}`;
-  if (EDIT_TOOLS.has(tool)) return `Editing${suffix}`;
-  if (tool === 'Bash') return target ? `Bash · ${target}` : 'Bash';
-  if (SEARCH_TOOLS.has(tool)) return `Searching${suffix}`;
-  if (tool === 'Task') return 'Task';
-  if (tool === 'TodoWrite') return 'Updating tasks';
-  if (BROWSING_TOOLS.has(tool)) return 'Browsing';
-  if (tool.startsWith('mcp__')) return 'Using MCP';
-  return tool;
+  if (typeof target !== 'string' || !target) return tool;
+  return tool === 'Bash' ? `${tool} · ${target}` : `${tool} ${target}`;
 }
 
 export function buildActivity(state, assets = {}) {

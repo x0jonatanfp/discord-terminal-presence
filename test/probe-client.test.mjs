@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { buildProbeCommand, parseProbeOutput, runProbe, runSshCommand } from '../src/probe-client.mjs';
+import { buildProbeCommand, parseProbeOutput, runProbe, runSshCommand, startProbeStream } from '../src/probe-client.mjs';
 
 const ssh = { binary: 'ssh.exe', host: '192.0.2.10', port: 22, user: 'tester' };
 const probe = { node: '/usr/bin/node', scriptPath: '/home/tester/Development/extensions/discord-terminal-presence/probe/state.mjs' };
@@ -21,7 +21,37 @@ function fakeChild() {
 test('construye el comando del probe en remoto', () => {
   assert.equal(buildProbeCommand(probe), '/usr/bin/node /home/tester/Development/extensions/discord-terminal-presence/probe/state.mjs');
   assert.equal(buildProbeCommand(probe, 'abc-123'), '/usr/bin/node /home/tester/Development/extensions/discord-terminal-presence/probe/state.mjs --presence-id abc-123');
+  assert.equal(buildProbeCommand(probe, 'abc-123', { watch: true }), '/usr/bin/node /home/tester/Development/extensions/discord-terminal-presence/probe/state.mjs --watch --presence-id abc-123');
   assert.throws(() => buildProbeCommand({}), /scriptPath/);
+});
+
+test('el stream parsea líneas NDJSON y las entrega en cuanto llegan', () => {
+  const child = fakeChild();
+  const received = [];
+  const errors = [];
+  const stream = startProbeStream({
+    ssh, probe, presenceId: 'abc',
+    spawn: () => child,
+    onState: (state) => received.push(state),
+    onError: (error) => errors.push(error),
+  });
+  child.stdout.emit('data', '{"ok":true,"idle":true}\n{"ok":true,"idle":false');
+  child.stdout.emit('data', ',"tool":"Read"}\n');
+  assert.deepEqual(received, [{ ok: true, idle: true }, { ok: true, idle: false, tool: 'Read' }]);
+  assert.equal(errors.length, 0);
+  stream.stop();
+  assert.equal(child.killed, true);
+});
+
+test('el stream informa de líneas no JSON y del cierre inesperado', () => {
+  const child = fakeChild();
+  const errors = [];
+  startProbeStream({ ssh, probe, spawn: () => child, onState: () => {}, onError: (error) => errors.push(error) });
+  child.stdout.emit('data', 'not json\n');
+  child.emit('close', 1, null);
+  assert.equal(errors.length, 2);
+  assert.match(errors[0].message, /no JSON/);
+  assert.match(errors[1].message, /terminó/);
 });
 
 test('invoca ssh.exe con BatchMode, host, puerto y comando del probe', async () => {

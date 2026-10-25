@@ -4,10 +4,12 @@ import { loadConfig } from './config.mjs';
 import { createDiscordClient } from './discord-ipc.mjs';
 import { createLogger } from './logger.mjs';
 import { buildActivity } from './presence.mjs';
-import { runProbe } from './probe-client.mjs';
+import { runProbe, startProbeStream } from './probe-client.mjs';
 import { claimWatcherLock, defaultSessionsDir, listLiveSessions, newestPresenceId, releaseWatcherLock, watcherLockPath } from './sessions.mjs';
 
 const DEFAULT_CONFIG_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'config.json');
+const HEARTBEAT_MS = 60000;
+const MAX_STREAM_FAILURES = 3;
 
 function optionValue(argv, option) {
   const index = argv.indexOf(option);
@@ -20,6 +22,7 @@ function sleep(ms) {
 
 export async function run({
   argv = process.argv.slice(2), configPath = DEFAULT_CONFIG_PATH, query = runProbe,
+  streamFactory = startProbeStream,
   discordFactory = createDiscordClient, loggerFactory = createLogger,
   stdout = process.stdout, stderr = process.stderr, sleepFn = sleep, now = Date.now,
   sessionReader = listLiveSessions, lockClaimer = claimWatcherLock,
@@ -74,9 +77,84 @@ export async function run({
   let lastDiscordState = null;
   let lastPayload;
   let lastSentAt = 0;
-  let consecutiveSshFailures = 0;
   let running = true;
-  const stop = () => { running = false; };
+
+  let stream = null;
+  let streamPresenceId = null;
+  let pendingState = null;
+  let resolveState = null;
+  let streamFailures = 0;
+  let closingStream = false;
+
+  const closeStream = () => {
+    if (!stream) return;
+    closingStream = true;
+    const current = stream;
+    stream = null;
+    streamPresenceId = null;
+    try { current.stop(); } finally { closingStream = false; }
+    if (resolveState) {
+      const resolve = resolveState;
+      resolveState = null;
+      resolve(undefined);
+    }
+  };
+
+  const openStream = (presenceId) => {
+    closeStream();
+    streamPresenceId = presenceId;
+    try {
+      stream = streamFactory({
+        ssh: config.ssh,
+        probe: config.probe,
+        presenceId,
+        onState: (state) => {
+          if (resolveState) {
+            const resolve = resolveState;
+            resolveState = null;
+            resolve(state);
+          } else {
+            // Si el bucle aún está pintando el estado anterior, conserva el último.
+            pendingState = state;
+          }
+        },
+        onError: (error) => {
+          if (closingStream) return;
+          streamFailures += 1;
+          void logger.warn(`Stream del probe (${streamFailures}): ${error.message}`);
+          closeStream();
+        },
+      });
+    } catch (error) {
+      streamFailures += 1;
+      stream = null;
+      streamPresenceId = null;
+      void logger.error(`No se pudo abrir el stream del probe: ${error.message}`);
+    }
+  };
+
+  const nextState = (timeoutMs) => {
+    if (pendingState !== null) {
+      const state = pendingState;
+      pendingState = null;
+      return Promise.resolve(state);
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        resolveState = null;
+        resolve(undefined);
+      }, timeoutMs);
+      resolveState = (state) => {
+        clearTimeout(timer);
+        resolve(state);
+      };
+    });
+  };
+
+  const stop = () => {
+    running = false;
+    closeStream();
+  };
   signals.once('SIGINT', stop);
   signals.once('SIGTERM', stop);
 
@@ -103,21 +181,18 @@ export async function run({
 
       let state;
       if (!presenceId) {
+        closeStream();
         state = { ok: true, idle: true };
-        consecutiveSshFailures = 0;
       } else {
-        try {
-          state = await query({ ssh: config.ssh, probe: config.probe, presenceId });
-          consecutiveSshFailures = 0;
-        } catch (error) {
-          consecutiveSshFailures += 1;
-          await logger.error(`Consulta SSH fallida (${consecutiveSshFailures}): ${error.message}`);
-          if (consecutiveSshFailures >= 3) state = { ok: true, idle: true };
+        if (stream && streamPresenceId !== presenceId) closeStream();
+        if (!stream && streamFailures < MAX_STREAM_FAILURES) openStream(presenceId);
+        if (stream) {
+          state = await nextState(config.pollIntervalMs);
+          if (state === undefined) continue;
+          streamFailures = 0;
+        } else {
+          state = { ok: true, idle: true };
         }
-      }
-      if (state === undefined) {
-        await sleepFn(config.pollIntervalMs);
-        continue;
       }
 
       try {
@@ -148,7 +223,7 @@ export async function run({
       }
       const serialized = JSON.stringify(activity);
       const timestamp = now();
-      if (serialized !== lastPayload || timestamp - lastSentAt >= 60000) {
+      if (serialized !== lastPayload || timestamp - lastSentAt >= HEARTBEAT_MS) {
         try {
           discord.setActivity(activity);
           lastPayload = serialized;
@@ -159,9 +234,15 @@ export async function run({
           await logger.warn(`No se pudo actualizar Discord: ${error.message}`);
         }
       }
-      await sleepFn(config.pollIntervalMs);
+
+      if (!presenceId) await sleepFn(config.pollIntervalMs);
+      if (presenceId && !stream) {
+        await sleepFn(config.pollIntervalMs);
+        if (streamFailures >= MAX_STREAM_FAILURES) streamFailures = 0;
+      }
     }
   } finally {
+    closeStream();
     discord.close();
     let remainingSessions;
     try { remainingSessions = await sessionReader(sessionsDir); } catch { /* No borrar el lock si el estado de sesiones no se puede verificar. */ }

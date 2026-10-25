@@ -1,5 +1,6 @@
 import { execFile as nodeExecFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { watch as nodeWatch } from 'node:fs';
 import { readFile as nodeReadFile, readdir as nodeReaddir, stat as nodeStat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -95,6 +96,7 @@ function toolTarget(tool, input = {}) {
     const description = input.description ?? input.prompt;
     return typeof description === 'string' ? description : null;
   }
+  if (tool === 'Skill') return typeof input.skill === 'string' ? input.skill : null;
   return null;
 }
 
@@ -207,7 +209,7 @@ async function findClaudeTranscript(cwd, homeDir, nowSeconds, dependencies) {
   withMtime.sort((a, b) => b.mtime - a.mtime);
   const candidate = withMtime[0];
   if (!candidate) return null;
-  const output = await execute(BINARIES.tail, ['-n', '500', candidate.file], dependencies);
+  const output = await execute(BINARIES.tail, ['-n', '5', candidate.file], dependencies);
   const transcript = output.split(/\r?\n/);
   const last = transcript.toReversed().find((line) => line.trim());
   try { if (JSON.parse(last).cwd !== cwd) return null; } catch { return null; }
@@ -366,11 +368,93 @@ export async function collectProbeState({
   };
 }
 
+export async function watchProbeState({
+  onState,
+  collectState = collectProbeState,
+  intervalMs = 1000,
+  debounceMs = 25,
+  homeDir = process.env.HOME,
+  ...options
+} = {}) {
+  if (typeof onState !== 'function') throw new TypeError('onState es obligatorio.');
+  if (!homeDir) throw new Error('No se pudo determinar HOME para ejecutar el probe.');
+  let last = null;
+  let closed = false;
+  let running = false;
+  let pending = false;
+  let debounceTimer = null;
+
+  const collect = async () => {
+    if (closed) return;
+    if (running) { pending = true; return; }
+    running = true;
+    let state;
+    try {
+      state = await collectState({ ...options, homeDir });
+    } catch (error) {
+      state = { ok: false, error: error.message };
+    } finally {
+      running = false;
+    }
+    if (closed) return;
+    // La edad cambia en cada tick aunque la tool sea la misma; no cuenta como cambio.
+    const serialized = JSON.stringify({ ...state, toolAgeSeconds: undefined, fileAgeSeconds: undefined });
+    // Solo se emite cuando el estado cambia; el watcher no repite heartbeats.
+    if (serialized !== last) {
+      last = serialized;
+      onState(state);
+    }
+    if (pending) { pending = false; void collect(); }
+  };
+
+  const schedule = () => {
+    if (closed || debounceTimer) return;
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      void collect();
+    }, debounceMs);
+  };
+
+  const watchers = [];
+  for (const directory of [
+    path.posix.join(homeDir, '.claude/projects'),
+    path.posix.join(homeDir, '.config/manicode/projects'),
+  ]) {
+    try {
+      const watcher = nodeWatch(directory, { recursive: true }, schedule);
+      watcher.on('error', () => { /* El poll de respaldo sigue funcionando. */ });
+      watchers.push(watcher);
+    } catch { /* Directorio ausente: queda el poll de respaldo. */ }
+  }
+  const timer = setInterval(() => { void collect(); }, intervalMs);
+  await collect();
+
+  return {
+    stop() {
+      closed = true;
+      clearInterval(timer);
+      if (debounceTimer) clearTimeout(debounceTimer);
+      for (const watcher of watchers) watcher.close();
+    },
+  };
+}
+
 export async function main() {
   try {
-    const index = process.argv.indexOf('--presence-id');
-    const presenceId = index === -1 ? null : process.argv[index + 1];
+    const args = process.argv.slice(2);
+    const index = args.indexOf('--presence-id');
+    const presenceId = index === -1 ? null : args[index + 1];
     if (index !== -1 && !presenceId) throw new Error('Falta el valor de --presence-id.');
+    if (args.includes('--watch')) {
+      const watcher = await watchProbeState({
+        presenceId,
+        onState: (state) => process.stdout.write(`${JSON.stringify(state)}\n`),
+      });
+      const stop = () => { watcher.stop(); process.exit(0); };
+      process.once('SIGTERM', stop);
+      process.once('SIGINT', stop);
+      return;
+    }
     const result = await collectProbeState(presenceId ? { presenceId } : {});
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch (error) {

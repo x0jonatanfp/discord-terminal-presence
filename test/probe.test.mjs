@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectProbeState, detectAgent, parseActivePane, parseClaudeTranscript, parseClients, parseFreebuffChat, relativeWorkspaceFile } from '../probe/state.mjs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { collectProbeState, detectAgent, parseActivePane, parseClaudeTranscript, parseClients, parseFreebuffChat, relativeWorkspaceFile, watchProbeState } from '../probe/state.mjs';
 
 const NOW = 1792794000;
 
@@ -90,6 +93,7 @@ test('Claude extrae el target de cada tipo de tool', () => {
   assert.equal(target('Glob', { pattern: '**/*.mjs' }), '**/*.mjs');
   assert.equal(target('Task', { description: 'Investigar el fallo' }), 'Investigar el fallo');
   assert.equal(target('Task', { prompt: 'Revisar tests' }), 'Revisar tests');
+  assert.equal(target('Skill', { skill: 'my-commits' }), 'my-commits');
   assert.equal(target('WebFetch', { url: 'https://example.com' }), 'https://example.com');
   assert.equal(target('WebSearch', { query: 'discord ipc' }), 'discord ipc');
   assert.equal(target('TodoWrite', { todos: [] }), null);
@@ -300,6 +304,29 @@ test('filtra los clientes tmux por el PRESENCE_ID de la pestaña', async () => {
   const state = await collectProbeState({ ...options, presenceId: 'objetivo' });
   assert.equal(state.session, 'infra');
   assert.deepEqual(await collectProbeState({ ...options, presenceId: 'inexistente' }), { ok: true, idle: true });
+});
+
+test('watchProbeState emite solo cuando cambia el estado', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'probe-watch-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const seen = [];
+  let calls = 0;
+  const collectState = async () => {
+    calls += 1;
+    return calls < 4 ? { ok: true, idle: true } : { ok: true, idle: false, tool: 'Read', toolAgeSeconds: calls };
+  };
+  const watcher = await watchProbeState({
+    homeDir: dir, intervalMs: 10, debounceMs: 1, collectState,
+    onState: (state) => seen.push(state),
+  });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  watcher.stop();
+  assert.deepEqual(seen[0], { ok: true, idle: true });
+  assert.deepEqual(seen.at(-1), { ok: true, idle: false, tool: 'Read', toolAgeSeconds: 4 });
+  assert.equal(new Set(seen.map((state) => JSON.stringify({ ...state, toolAgeSeconds: undefined }))).size, seen.length);
+  const total = seen.length;
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(seen.length, total);
 });
 
 test('detecta codex lanzado desde zsh y descarta shells sin agente', async () => {

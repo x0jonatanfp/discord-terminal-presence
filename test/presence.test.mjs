@@ -12,7 +12,7 @@ const assets = { largeImage: 'terminal', largeText: 'tmux on remote', agents: { 
 test('construye tarjeta con tool en curso y hovers de assets', () => {
   assert.deepEqual(buildActivity(state, assets), {
     details: 'Claude · discord-terminal-presence',
-    state: 'Editing .gitignore',
+    state: 'Edit .gitignore',
     timestamps: { start: 1792793171000 },
     instance: false,
     assets: {
@@ -24,21 +24,22 @@ test('construye tarjeta con tool en curso y hovers de assets', () => {
   });
 });
 
-test('mapea cada tool a la segunda línea', () => {
+test('la segunda línea usa el nombre real de cada tool', () => {
   const cases = [
-    ['Read', 'src/foo.ts', 'Reading src/foo.ts'],
-    ['Edit', 'src/foo.ts', 'Editing src/foo.ts'],
-    ['Write', 'src/foo.ts', 'Editing src/foo.ts'],
-    ['MultiEdit', 'src/foo.ts', 'Editing src/foo.ts'],
-    ['NotebookEdit', 'nb.ipynb', 'Editing nb.ipynb'],
+    ['Read', 'src/foo.ts', 'Read src/foo.ts'],
+    ['Edit', 'src/foo.ts', 'Edit src/foo.ts'],
+    ['Write', 'src/foo.ts', 'Write src/foo.ts'],
+    ['MultiEdit', 'src/foo.ts', 'MultiEdit src/foo.ts'],
+    ['NotebookEdit', 'nb.ipynb', 'NotebookEdit nb.ipynb'],
     ['Bash', 'npm test', 'Bash · npm test'],
-    ['Grep', 'TODO', 'Searching TODO'],
-    ['Glob', '**/*.mjs', 'Searching **/*.mjs'],
-    ['Task', null, 'Task'],
-    ['TodoWrite', null, 'Updating tasks'],
-    ['WebFetch', null, 'Browsing'],
-    ['WebSearch', null, 'Browsing'],
-    ['mcp__engram__mem_save', null, 'Using MCP'],
+    ['Grep', 'TODO', 'Grep TODO'],
+    ['Glob', '**/*.mjs', 'Glob **/*.mjs'],
+    ['Task', 'Investigar el fallo', 'Task Investigar el fallo'],
+    ['Skill', 'my-commits', 'Skill my-commits'],
+    ['TodoWrite', null, 'TodoWrite'],
+    ['WebFetch', null, 'WebFetch'],
+    ['WebSearch', null, 'WebSearch'],
+    ['mcp__engram__mem_save', null, 'mcp__engram__mem_save'],
     ['AskUserQuestion', null, 'AskUserQuestion'],
   ];
   for (const [tool, toolTarget, expected] of cases) {
@@ -49,10 +50,10 @@ test('mapea cada tool a la segunda línea', () => {
 test('sin tool pendiente muestra Idle aunque el probe conserve file', () => {
   assert.equal(buildActivity({ ...state, tool: null, toolTarget: null, file: 'src/a.mjs', fileAgeSeconds: 3 }, {}).state, 'Idle');
   assert.equal(buildActivity({ ...state, tool: null, toolTarget: null, file: null }, {}).state, 'Idle');
-  assert.equal(buildActivity({ ...state, tool: 'Read', toolTarget: null }, {}).state, 'Reading');
-  assert.equal(buildActivity({ ...state, tool: 'Edit', toolTarget: null }, {}).state, 'Editing');
+  assert.equal(buildActivity({ ...state, tool: 'Read', toolTarget: null }, {}).state, 'Read');
+  assert.equal(buildActivity({ ...state, tool: 'Edit', toolTarget: null }, {}).state, 'Edit');
   assert.equal(buildActivity({ ...state, tool: 'Bash', toolTarget: null }, {}).state, 'Bash');
-  assert.equal(buildActivity({ ...state, tool: 'Grep', toolTarget: null }, {}).state, 'Searching');
+  assert.equal(buildActivity({ ...state, tool: 'Grep', toolTarget: null }, {}).state, 'Grep');
 });
 
 test('mapea agentes conocidos y usa title del probe como hover grande', () => {
