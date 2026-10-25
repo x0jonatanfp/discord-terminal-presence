@@ -4,12 +4,12 @@ import { buildActivity } from '../src/presence.mjs';
 
 const state = {
   ok: true, idle: false, session: 'infra', agent: 'claude', title: '✳ Presencia de Discord con tmux',
-  workspace: 'discord-terminal-presence', file: '.gitignore', filePath: '/repo/.gitignore',
-  action: 'edit', fileAgeSeconds: 3, createdSeconds: 1792793171,
+  workspace: 'discord-terminal-presence', tool: 'Edit', toolTarget: '.gitignore', toolAgeSeconds: 3,
+  action: 'edit', createdSeconds: 1792793171,
 };
 const assets = { largeImage: 'terminal', largeText: 'tmux on remote', agents: { claude: 'claude', freebuff: 'freebuff' } };
 
-test('construye tarjeta de edición con detalles y hovers de assets', () => {
+test('construye tarjeta con tool en curso y hovers de assets', () => {
   assert.deepEqual(buildActivity(state, assets), {
     details: 'Claude · discord-terminal-presence',
     state: 'Editing .gitignore',
@@ -24,18 +24,40 @@ test('construye tarjeta de edición con detalles y hovers de assets', () => {
   });
 });
 
-test('distingue edición reciente e idle y recorta rutas fuera del proyecto al nombre', () => {
-  const base = { ...state, workspace: 'repo', file: 'src/a.mjs', filePath: '/repo/src/a.mjs' };
-  assert.equal(buildActivity({ ...base, fileAgeSeconds: 30 }).details, 'Claude · repo');
-  assert.equal(buildActivity({ ...base, fileAgeSeconds: 30 }).state, 'Editing src/a.mjs');
-  assert.equal(buildActivity({ ...base, file: '~/x/y.ts', fileAgeSeconds: 30 }).state, 'Editing y.ts');
-  assert.equal(buildActivity({ ...base, fileAgeSeconds: 1200 }).state, 'Idle');
-  assert.equal(buildActivity({ ...base, file: null, filePath: null, fileAgeSeconds: null }).state, 'Idle');
+test('mapea cada tool a la segunda línea', () => {
+  const cases = [
+    ['Read', 'src/foo.ts', 'Reading src/foo.ts'],
+    ['Edit', 'src/foo.ts', 'Editing src/foo.ts'],
+    ['Write', 'src/foo.ts', 'Editing src/foo.ts'],
+    ['MultiEdit', 'src/foo.ts', 'Editing src/foo.ts'],
+    ['NotebookEdit', 'nb.ipynb', 'Editing nb.ipynb'],
+    ['Bash', 'npm test', 'Bash · npm test'],
+    ['Grep', 'TODO', 'Searching TODO'],
+    ['Glob', '**/*.mjs', 'Searching **/*.mjs'],
+    ['Task', null, 'Task'],
+    ['TodoWrite', null, 'Updating tasks'],
+    ['WebFetch', null, 'Browsing'],
+    ['WebSearch', null, 'Browsing'],
+    ['mcp__engram__mem_save', null, 'Using MCP'],
+    ['AskUserQuestion', null, 'AskUserQuestion'],
+  ];
+  for (const [tool, toolTarget, expected] of cases) {
+    assert.equal(buildActivity({ ...state, tool, toolTarget }, {}).state, expected);
+  }
+});
+
+test('sin tool pendiente muestra Idle aunque el probe conserve file', () => {
+  assert.equal(buildActivity({ ...state, tool: null, toolTarget: null, file: 'src/a.mjs', fileAgeSeconds: 3 }, {}).state, 'Idle');
+  assert.equal(buildActivity({ ...state, tool: null, toolTarget: null, file: null }, {}).state, 'Idle');
+  assert.equal(buildActivity({ ...state, tool: 'Read', toolTarget: null }, {}).state, 'Reading');
+  assert.equal(buildActivity({ ...state, tool: 'Edit', toolTarget: null }, {}).state, 'Editing');
+  assert.equal(buildActivity({ ...state, tool: 'Bash', toolTarget: null }, {}).state, 'Bash');
+  assert.equal(buildActivity({ ...state, tool: 'Grep', toolTarget: null }, {}).state, 'Searching');
 });
 
 test('mapea agentes conocidos y usa title del probe como hover grande', () => {
   for (const [agent, label, image] of [['freebuff', 'Freebuff', 'freebuff'], ['opencode', 'OpenCode', undefined], ['codex', 'Codex', undefined]]) {
-    const activity = buildActivity({ ...state, agent, file: null, workspace: 'repo', title: 'Task title' }, assets);
+    const activity = buildActivity({ ...state, agent, tool: null, workspace: 'repo', title: 'Task title' }, assets);
     assert.equal(activity.details, `${label} · repo`);
     assert.equal(activity.state, 'Idle');
     assert.equal(activity.assets.large_text, 'Task title');
@@ -44,24 +66,24 @@ test('mapea agentes conocidos y usa title del probe como hover grande', () => {
   }
 });
 
-test('usa comando para el hover y fallback de state si agent es shell', () => {
-  const activity = buildActivity({ ...state, agent: 'shell', command: 'zsh', file: null, title: '', workspace: 'repo' }, { largeImage: 'terminal', largeText: 'tmux on remote' });
+test('usa el comando como agente shell y publica la tool', () => {
+  const activity = buildActivity({ ...state, agent: 'shell', command: 'zsh', title: '', tool: 'Bash', toolTarget: 'npm test', workspace: 'repo' }, { largeImage: 'terminal', largeText: 'tmux on remote' });
   assert.equal(activity.details, 'zsh · repo');
-  assert.equal(activity.state, 'Idle');
+  assert.equal(activity.state, 'Bash · npm test');
   assert.deepEqual(activity.assets, {
     large_image: 'terminal', large_text: 'tmux on remote', small_text: 'Agent: zsh · infra',
   });
 });
 
-test('fallbacks sin fichero y omite imagen pequeña no configurada', () => {
-  const activity = buildActivity({ ...state, file: null, title: null, agent: 'other', workspace: 'repo' }, { largeImage: 'terminal', largeText: 'tmux on remote' });
+test('fallbacks sin tool y omite imagen pequeña no configurada', () => {
+  const activity = buildActivity({ ...state, tool: null, title: null, agent: 'other', workspace: 'repo' }, { largeImage: 'terminal', largeText: 'tmux on remote' });
   assert.equal(activity.details, 'other · repo');
   assert.equal(activity.state, 'Idle');
   assert.deepEqual(activity.assets, { large_image: 'terminal', large_text: 'tmux on remote', small_text: 'Agent: other · infra' });
 });
 
 test('trunca texto a 128 bytes sin partir UTF-8 y muestra Idle sin sesión tmux', () => {
-  const activity = buildActivity({ ...state, session: '界'.repeat(100), file: 'é'.repeat(100) }, assets);
+  const activity = buildActivity({ ...state, session: '界'.repeat(100), tool: 'Edit', toolTarget: 'é'.repeat(100) }, assets);
   assert.ok(Buffer.byteLength(activity.details, 'utf8') <= 128);
   assert.ok(Buffer.byteLength(activity.state, 'utf8') <= 128);
   assert.doesNotMatch(activity.details, /�/);

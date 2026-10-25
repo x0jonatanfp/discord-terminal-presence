@@ -19,8 +19,8 @@ async function configFile(t, { sessionsDir } = {}) {
 
 const state = {
   ok: true, idle: false, session: 'infra', agent: 'claude', title: 'Task', workspace: 'repo',
-  workspacePath: '/repo', branch: 'main', paneCwd: '/home/tester/Infra', file: 'src/file.mjs',
-  action: 'edit', fileAgeSeconds: 3, createdSeconds: 10,
+  workspacePath: '/repo', branch: 'main', paneCwd: '/home/tester/Infra', tool: 'Edit', toolTarget: 'src/file.mjs',
+  file: 'src/file.mjs', action: 'edit', fileAgeSeconds: 3, createdSeconds: 10,
 };
 
 function harness(query, { sessionReader = async () => [123, 456], lockClaimer = async () => ({ acquired: true }), presenceIdReader = async () => 'presence-test' } = {}) {
@@ -67,6 +67,7 @@ test('muestra idle tras el tercer fallo SSH, conservando estado en los dos prime
   await run(launchOwnedWatcher(h.options));
   assert.equal(h.sent.length, 2);
   assert.equal(h.sent[0].details, 'Claude · repo');
+  assert.equal(h.sent[0].state, 'Editing src/file.mjs');
   assert.deepEqual(h.sent[1], { details: 'Idle', instance: false });
   assert.equal(h.logs.filter((line) => line.startsWith('Consulta SSH')).length, 3);
 });

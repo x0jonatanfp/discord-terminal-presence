@@ -11,16 +11,26 @@ function truncateUtf8(value, maxBytes = 128) {
 }
 
 const AGENT_LABELS = { claude: 'Claude', freebuff: 'Freebuff', opencode: 'OpenCode', codex: 'Codex' };
-const EDITING_MAX_AGE_SECONDS = 10 * 60;
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+const SEARCH_TOOLS = new Set(['Grep', 'Glob']);
+const BROWSING_TOOLS = new Set(['WebFetch', 'WebSearch']);
 
 function displayAgent(agent, command) {
   return AGENT_LABELS[agent] ?? (agent === 'shell' ? command : agent);
 }
 
-function displayFile(file) {
-  if (typeof file !== 'string' || !file) return null;
-  if (file.startsWith('/') || file.startsWith('~/')) return file.split('/').pop();
-  return file;
+function displayTool(tool, target) {
+  if (typeof tool !== 'string' || !tool) return 'Idle';
+  const suffix = typeof target === 'string' && target ? ` ${target}` : '';
+  if (tool === 'Read') return `Reading${suffix}`;
+  if (EDIT_TOOLS.has(tool)) return `Editing${suffix}`;
+  if (tool === 'Bash') return target ? `Bash · ${target}` : 'Bash';
+  if (SEARCH_TOOLS.has(tool)) return `Searching${suffix}`;
+  if (tool === 'Task') return 'Task';
+  if (tool === 'TodoWrite') return 'Updating tasks';
+  if (BROWSING_TOOLS.has(tool)) return 'Browsing';
+  if (tool.startsWith('mcp__')) return 'Using MCP';
+  return tool;
 }
 
 export function buildActivity(state, assets = {}) {
@@ -31,7 +41,7 @@ export function buildActivity(state, assets = {}) {
     }
     return idle;
   }
-  const { session, agent, workspace, file, title, fileAgeSeconds, createdSeconds, command } = state ?? {};
+  const { session, agent, workspace, tool, toolTarget, title, createdSeconds, command } = state ?? {};
   if (![session, agent, workspace].every((value) => typeof value === 'string' && value.length > 0)) {
     throw new TypeError('session, agent y workspace deben ser cadenas no vacías.');
   }
@@ -41,10 +51,7 @@ export function buildActivity(state, assets = {}) {
 
   const agentDisplay = displayAgent(agent, command || agent);
   const details = `${agentDisplay} · ${workspace}`;
-  const fileAge = Number.isFinite(fileAgeSeconds) ? fileAgeSeconds : 0;
-  const shownFile = displayFile(file);
-  const isEditing = Boolean(shownFile) && fileAge <= EDITING_MAX_AGE_SECONDS;
-  const stateText = isEditing ? `Editing ${shownFile}` : 'Idle';
+  const stateText = displayTool(tool, toolTarget);
   const activity = {
     details: truncateUtf8(details),
     state: truncateUtf8(stateText),
