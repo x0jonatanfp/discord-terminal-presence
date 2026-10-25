@@ -6,9 +6,16 @@ import { pathToFileURL } from 'node:url';
 
 const execFile = promisify(nodeExecFile);
 const BINARIES = { tmux: '/usr/bin/tmux', ps: '/usr/bin/ps', git: '/usr/bin/git', tail: '/usr/bin/tail' };
-const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
-const FREEBUFF_TOOLS = new Set(['write_file', 'str_replace']);
-const MAX_EDIT_AGE_SECONDS = 24 * 60 * 60;
+const FILE_TOOLS = new Set(['Read', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+const FREEBUFF_TOOL_MAP = new Map([
+  ['read_file', 'Read'],
+  ['write_file', 'Edit'],
+  ['str_replace', 'Edit'],
+  ['run_terminal_command', 'Bash'],
+  ['write_todos', 'TodoWrite'],
+]);
+const MAX_TRANSCRIPT_AGE_SECONDS = 24 * 60 * 60;
+const MAX_TOOL_AGE_SECONDS = 10 * 60;
 const SEP = '\x1f';
 
 export function parseClients(output) {
@@ -75,24 +82,38 @@ function collectClaudeToolUses(value, result = [], inheritedTimestamp = null) {
   return result;
 }
 
-export function parseClaudeTranscript(lines, { nowSeconds = Date.now() / 1000, maxAgeSeconds = MAX_EDIT_AGE_SECONDS } = {}) {
-  const tools = [];
-  for (const line of lines) {
-    try {
-      const record = JSON.parse(line);
-      const timestamp = timestampSeconds(record.timestamp);
-      for (const tool of collectClaudeToolUses(record)) {
-        const toolTimestamp = tool.timestamp ?? timestamp;
-        if (toolTimestamp === null) continue;
-        tools.push({ ...tool, timestamp: toolTimestamp });
-      }
-    } catch { /* Las líneas parciales o malformadas de una transcripción se ignoran. */ }
+function toolTarget(tool, input = {}) {
+  if (FILE_TOOLS.has(tool)) {
+    const filePath = tool === 'NotebookEdit' ? input.notebook_path ?? input.file_path : input.file_path;
+    return typeof filePath === 'string' ? filePath : null;
   }
-  const last = tools.at(-1);
-  if (!last || !EDIT_TOOLS.has(last.name) || typeof last.input?.file_path !== 'string') return null;
-  const ageSeconds = Math.floor(nowSeconds - last.timestamp);
+  if (tool === 'Bash') return typeof input.command === 'string' ? input.command : null;
+  if (tool === 'Grep' || tool === 'Glob') return typeof input.pattern === 'string' ? input.pattern : null;
+  if (tool === 'WebFetch') return typeof input.url === 'string' ? input.url : null;
+  if (tool === 'WebSearch') return typeof input.query === 'string' ? input.query : null;
+  if (tool === 'Task') {
+    const description = input.description ?? input.prompt;
+    return typeof description === 'string' ? description : null;
+  }
+  return null;
+}
+
+export function parseClaudeTranscript(lines, { nowSeconds = Date.now() / 1000, maxAgeSeconds = MAX_TOOL_AGE_SECONDS } = {}) {
+  const allLines = Array.isArray(lines) ? lines : String(lines).split(/\r?\n/);
+  const lastLine = [...allLines].reverse().find((line) => String(line).trim());
+  if (!lastLine) return null;
+  let record;
+  try { record = JSON.parse(lastLine); } catch { return null; }
+  // Solo un mensaje del asistente puede dejar una tool pendiente; el tool_result
+  // llega en un mensaje de usuario posterior y cierra la tool anterior.
+  if (record?.type !== 'assistant') return null;
+  const pending = collectClaudeToolUses(record).at(-1);
+  if (!pending) return null;
+  const timestamp = pending.timestamp ?? timestampSeconds(record.timestamp);
+  if (timestamp === null) return null;
+  const ageSeconds = Math.floor(nowSeconds - timestamp);
   if (ageSeconds < 0 || ageSeconds > maxAgeSeconds) return null;
-  return { filePath: last.input.file_path, timestamp: last.timestamp, ageSeconds };
+  return { tool: pending.name, target: toolTarget(pending.name, pending.input), timestamp, ageSeconds };
 }
 
 function collectFreebuffTools(value, result = [], inheritedTimestamp = null) {
@@ -101,23 +122,35 @@ function collectFreebuffTools(value, result = [], inheritedTimestamp = null) {
   } else if (value && typeof value === 'object') {
     const timestamp = timestampSeconds(value.timestamp ?? value.createdAt ?? value.time) ?? inheritedTimestamp;
     if (typeof value.toolName === 'string') {
-      result.push({ toolName: value.toolName, input: value.input, timestamp });
+      result.push({
+        toolName: value.toolName,
+        input: value.input,
+        timestamp,
+        completed: value.completed === true || value.output != null,
+      });
     }
     for (const child of Object.values(value)) collectFreebuffTools(child, result, timestamp);
   }
   return result;
 }
 
-export function parseFreebuffChat(chat, { nowSeconds = Date.now() / 1000, mtimeSeconds = nowSeconds, maxAgeSeconds = MAX_EDIT_AGE_SECONDS } = {}) {
+export function parseFreebuffChat(chat, { nowSeconds = Date.now() / 1000, mtimeSeconds = nowSeconds, maxAgeSeconds = MAX_TOOL_AGE_SECONDS } = {}) {
   let value;
   try { value = typeof chat === 'string' ? JSON.parse(chat) : chat; } catch { return null; }
   const tools = collectFreebuffTools(value);
   for (const tool of tools) tool.timestamp ??= mtimeSeconds;
   const last = tools.at(-1);
-  if (!last || !FREEBUFF_TOOLS.has(last.toolName) || typeof last.input?.path !== 'string') return null;
+  // Una tool con resultado ya terminó: no hay ninguna pendiente.
+  if (!last || last.completed) return null;
+  const tool = FREEBUFF_TOOL_MAP.get(last.toolName);
+  if (!tool) return null;
   const ageSeconds = Math.floor(nowSeconds - last.timestamp);
   if (ageSeconds < 0 || ageSeconds > maxAgeSeconds) return null;
-  return { filePath: last.input.path, timestamp: last.timestamp, ageSeconds };
+  const input = last.input ?? {};
+  const target = FILE_TOOLS.has(tool)
+    ? (typeof input.path === 'string' ? input.path : null)
+    : (tool === 'Bash' && typeof input.command === 'string' ? input.command : null);
+  return { tool, target, timestamp: last.timestamp, ageSeconds };
 }
 
 export function relativeWorkspaceFile(filePath, workspacePath, homeDir) {
@@ -194,7 +227,7 @@ async function findFreebuffChat(projectName, nowSeconds, dependencies) {
   }
   chats.sort((a, b) => b.mtimeSeconds - a.mtimeSeconds);
   const newest = chats[0];
-  if (!newest || nowSeconds - newest.mtimeSeconds > MAX_EDIT_AGE_SECONDS) return null;
+  if (!newest || nowSeconds - newest.mtimeSeconds > MAX_TRANSCRIPT_AGE_SECONDS) return null;
   const content = await dependencies.readFile(newest.file, 'utf8');
   return parseFreebuffChat(content, { nowSeconds, mtimeSeconds: newest.mtimeSeconds });
 }
@@ -274,27 +307,39 @@ export async function collectProbeState({
   if (agent === 'shell' || agent === 'other') return { ok: true, idle: true };
   const paneCwd = path.posix.resolve(pane.paneCwd.replace(/^~(?=\/|$)/, homeDir));
   const cwdWorkspace = await gitWorkspace(paneCwd, dependencies);
-  let edit = null;
+  let pending = null;
   let title = pane.title ? truncate(pane.title) : '';
   const agentCommand = pane.command;
 
   if (agent === 'claude') {
-    edit = await findClaudeTranscript(paneCwd, homeDir, nowSeconds, dependencies);
+    pending = await findClaudeTranscript(paneCwd, homeDir, nowSeconds, dependencies);
   } else if (agent === 'freebuff') {
-    edit = await findFreebuffChat(path.posix.basename(paneCwd), nowSeconds, dependencies);
+    pending = await findFreebuffChat(path.posix.basename(paneCwd), nowSeconds, dependencies);
     title = await readFreebuffTitle(path.posix.basename(paneCwd), dependencies);
   }
 
+  let workspace = cwdWorkspace ?? { path: paneCwd, name: path.posix.basename(paneCwd) || paneCwd || 'root', branch: null };
   let file = null;
   let filePath = null;
-  let workspace = cwdWorkspace ?? { path: paneCwd, name: path.posix.basename(paneCwd) || paneCwd || 'root', branch: null };
-  if (edit) {
-    const editPath = edit.filePath.replace(/^~(?=\/|$)/, homeDir);
-    const editedPath = path.posix.resolve(paneCwd, editPath);
-    const fileWorkspace = await gitWorkspace(path.posix.dirname(editedPath), dependencies);
-    if (fileWorkspace) workspace = fileWorkspace;
-    filePath = editedPath;
-    file = relativeWorkspaceFile(editedPath, workspace.path, homeDir);
+  let action = null;
+  let fileAgeSeconds = null;
+  let toolTarget = null;
+  if (pending) {
+    if (FILE_TOOLS.has(pending.tool) && typeof pending.target === 'string' && pending.target) {
+      const requestPath = pending.target.replace(/^~(?=\/|$)/, homeDir);
+      const resolvedPath = path.posix.resolve(paneCwd, requestPath);
+      const fileWorkspace = await gitWorkspace(path.posix.dirname(resolvedPath), dependencies);
+      if (fileWorkspace) workspace = fileWorkspace;
+      filePath = resolvedPath;
+      file = relativeWorkspaceFile(resolvedPath, workspace.path, homeDir);
+      action = pending.tool === 'Read' ? 'read' : 'edit';
+      fileAgeSeconds = pending.ageSeconds;
+      // Nunca se publica una ruta absoluta: fuera del workspace solo el nombre.
+      toolTarget = file.startsWith('~/') || path.posix.isAbsolute(file) ? path.posix.basename(filePath) : file;
+    } else if (typeof pending.target === 'string' && pending.target) {
+      toolTarget = pending.target.replace(/\s+/g, ' ').trim();
+    }
+    toolTarget = toolTarget ? truncate(toolTarget, 70) : null;
   }
 
   return {
@@ -309,10 +354,13 @@ export async function collectProbeState({
     workspacePath: workspace.path,
     branch: workspace.branch,
     paneCwd,
+    tool: pending?.tool ?? null,
+    toolTarget,
+    toolAgeSeconds: pending?.ageSeconds ?? null,
     file,
     filePath,
-    action: file ? 'edit' : null,
-    fileAgeSeconds: edit?.ageSeconds ?? null,
+    action,
+    fileAgeSeconds,
     createdSeconds: pane.createdSeconds,
     command: agentCommand,
   };
