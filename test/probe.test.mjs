@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { collectProbeState, detectAgent, parseActivePane, parseClaudeTranscript, parseClients, parseFreebuffChat, relativeWorkspaceFile, watchProbeState } from '../probe/state.mjs';
+import { parseCodexSession, parseOpenCodeMessage } from '../domain/tool-pending.mjs';
+import { createAgentTranscriptAdapters } from '../infrastructure/agent-transcripts.mjs';
 
-const NOW = 1792794000;
+const NOW = 1793024400;
+const FIXTURES = JSON.parse(await readFile(new URL('./fixtures/pending-tools.json', import.meta.url), 'utf8'));
 
 test('parsea cliente más reciente y campos de pane activo', () => {
   assert.deepEqual(parseClients('bad\n10\x1fold\x1f101\n20\x1finfra\x1f202'), [
@@ -36,6 +39,21 @@ test('detecta claude, opencode, freebuff/codex en hijos de node y shells', () =>
   assert.equal(detectAgent('zsh', 'vim file'), 'shell');
   assert.equal(detectAgent('fish'), 'shell');
   assert.equal(detectAgent('python'), 'other');
+});
+
+test('fixtures anonimizados verifican la detección de tools pendientes en los cuatro formatos', () => {
+  assert.deepEqual(parseClaudeTranscript(FIXTURES.claude, { nowSeconds: NOW }), {
+    tool: 'Read', target: '/workspace/src/probe.mjs', timestamp: NOW - 2, ageSeconds: 2,
+  });
+  assert.deepEqual(parseFreebuffChat(FIXTURES.freebuff, { nowSeconds: NOW }), {
+    tool: 'read_files', target: 'src/probe.mjs', timestamp: NOW - 1, ageSeconds: 1,
+  });
+  assert.deepEqual(parseCodexSession(FIXTURES.codex, { nowSeconds: NOW }), {
+    tool: 'exec_command', target: 'node --test', timestamp: NOW - 1, ageSeconds: 1,
+  });
+  assert.deepEqual(parseOpenCodeMessage(FIXTURES.opencode, { nowSeconds: NOW }), {
+    tool: 'shell', target: 'node --test', timestamp: NOW - 1, ageSeconds: 1,
+  });
 });
 
 test('Claude devuelve la tool pendiente de la última línea del asistente', () => {
@@ -106,17 +124,91 @@ test('freebuff devuelve la última tool pendiente normalizada', () => {
     { timestamp: NOW - 2, toolName: 'read_file', input: { path: '/repo/b.mjs' } },
   ] };
   assert.deepEqual(parseFreebuffChat(chat, { nowSeconds: NOW, mtimeSeconds: NOW }), {
-    tool: 'Read', target: '/repo/b.mjs', timestamp: NOW - 2, ageSeconds: 2,
+    tool: 'read_file', target: '/repo/b.mjs', timestamp: NOW - 2, ageSeconds: 2,
   });
 });
 
 test('freebuff mapea write_file, str_replace, run_terminal_command y write_todos', () => {
   const pending = (toolName, input) => parseFreebuffChat({ messages: [{ timestamp: NOW - 2, toolName, input }] }, { nowSeconds: NOW, mtimeSeconds: NOW });
-  assert.deepEqual(pending('write_file', { path: '/repo/a' }), { tool: 'Edit', target: '/repo/a', timestamp: NOW - 2, ageSeconds: 2 });
-  assert.deepEqual(pending('str_replace', { path: '/repo/b' }), { tool: 'Edit', target: '/repo/b', timestamp: NOW - 2, ageSeconds: 2 });
-  assert.deepEqual(pending('run_terminal_command', { command: 'npm test' }), { tool: 'Bash', target: 'npm test', timestamp: NOW - 2, ageSeconds: 2 });
-  assert.deepEqual(pending('write_todos', { todos: [] }), { tool: 'TodoWrite', target: null, timestamp: NOW - 2, ageSeconds: 2 });
-  assert.equal(pending('unknown_tool', { path: '/repo/a' }), null);
+  assert.deepEqual(pending('write_file', { path: '/repo/a' }), { tool: 'write_file', target: '/repo/a', timestamp: NOW - 2, ageSeconds: 2 });
+  assert.deepEqual(pending('str_replace', { path: '/repo/b' }), { tool: 'str_replace', target: '/repo/b', timestamp: NOW - 2, ageSeconds: 2 });
+  assert.deepEqual(pending('run_terminal_command', { command: 'npm test' }), { tool: 'run_terminal_command', target: 'npm test', timestamp: NOW - 2, ageSeconds: 2 });
+  assert.deepEqual(pending('write_todos', { todos: [] }), { tool: 'write_todos', target: null, timestamp: NOW - 2, ageSeconds: 2 });
+  assert.deepEqual(pending('unknown_tool', { path: '/repo/a' }), { tool: 'unknown_tool', target: '/repo/a', timestamp: NOW - 2, ageSeconds: 2 });
+});
+
+test('freebuff lee el run-state real, ignora resultados y conserva el nombre de tool', () => {
+  const pending = parseFreebuffChat(FIXTURES.freebuff, { nowSeconds: NOW });
+  assert.equal(pending.tool, 'read_files');
+  assert.equal(parseFreebuffChat({ sessionState: { mainAgentState: { messageHistory: [
+    { role: 'assistant', sentAt: NOW * 1000 - 1000, content: [{ type: 'tool-call', toolName: 'run_terminal_command', toolCallId: 'done', input: { command: 'node --test' } }] },
+    { role: 'tool', toolName: 'run_terminal_command', toolCallId: 'done', content: [{ type: 'json', value: '{}' }] },
+  ] } } }, { nowSeconds: NOW }), null);
+});
+
+test('adaptadores de Claude, Freebuff, Codex y OpenCode leen sus almacenes y cierran recursos', async () => {
+  const cwd = '/workspace';
+  const files = new Map([
+    ['/home/tester/.claude/projects/-workspace/session.jsonl', JSON.stringify({ cwd, type: 'assistant', timestamp: NOW - 2, message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: '/workspace/src/a.mjs' } }] } })],
+    ['/home/tester/.config/manicode/projects/workspace/chats/2026-10-26/chat-messages.json', JSON.stringify(FIXTURES.freebuff)],
+    ['/home/tester/.codex/sessions/2026/10/26/session.jsonl', `${JSON.stringify(FIXTURES.codex[0])}\n${FIXTURES.codex.slice(1).map((record) => JSON.stringify(record)).join('\n')}`],
+  ]);
+  const entries = {
+    '/home/tester/.claude/projects/-workspace': [{ name: 'session.jsonl', isFile: () => true, isDirectory: () => false }],
+    '/home/tester/.config/manicode/projects/workspace/chats': [{ name: '2026-10-26', isFile: () => false, isDirectory: () => true }],
+    '/home/tester/.codex/sessions': [{ name: '2026', isFile: () => false, isDirectory: () => true }],
+    '/home/tester/.codex/sessions/2026': [{ name: '10', isFile: () => false, isDirectory: () => true }],
+    '/home/tester/.codex/sessions/2026/10': [{ name: '26', isFile: () => false, isDirectory: () => true }],
+    '/home/tester/.codex/sessions/2026/10/26': [{ name: 'session.jsonl', isFile: () => true, isDirectory: () => false }],
+  };
+  const stats = new Map([...files.keys(), '/home/tester/.local/share/opencode/opencode.db'].map((file) => [file, { mtimeMs: NOW * 1000 }]));
+  const dependencies = {
+    homeDir: '/home/tester',
+    async readdir(directory) { return entries[directory] ?? []; },
+    async stat(file) { if (stats.has(file)) return stats.get(file); throw Object.assign(new Error('not found'), { code: 'ENOENT' }); },
+    async readFile(file) { if (files.has(file)) return files.get(file); throw Object.assign(new Error('not found'), { code: 'ENOENT' }); },
+    async execFile(binary, args) {
+      if (binary.endsWith('/tail') && args[0] === '-n' && args[1] === '5') return { stdout: `${files.get(args[2])}\n` };
+      if (binary.endsWith('/head')) return { stdout: JSON.stringify({ type: 'session_meta', payload: { cwd } }) };
+      if (binary.endsWith('/tail')) return { stdout: files.get(args[2]).split('\n').slice(-200).join('\n') };
+      throw new Error('unexpected command');
+    },
+  };
+  let closed = false;
+  const databaseSync = () => ({
+    prepare(sql) {
+      if (sql.includes('sqlite_master')) return { all: () => [{ name: 'session_v2' }, { name: 'session_message' }] };
+      if (sql.includes('FROM session_v2')) return { get: () => ({ id: 'session-1' }) };
+      if (sql.includes('FROM session_message')) return { all: () => [{ data: JSON.stringify(FIXTURES.opencode) }] };
+      throw new Error(`unexpected SQL: ${sql}`);
+    },
+    close() { closed = true; },
+  });
+  const adapters = createAgentTranscriptAdapters({ dependencies, databaseSync });
+  assert.equal((await adapters.claude({ cwd, homeDir: dependencies.homeDir, nowSeconds: NOW })).tool, 'Read');
+  assert.equal((await adapters.freebuff({ cwd, nowSeconds: NOW })).tool, 'read_files');
+  assert.equal((await adapters.codex({ cwd, homeDir: dependencies.homeDir, nowSeconds: NOW })).tool, 'exec_command');
+  assert.equal((await adapters.opencode({ cwd, nowSeconds: NOW })).tool, 'shell');
+  assert.equal(closed, true);
+});
+
+test('Codex usa call_id y tool_output para descartar calls completadas', () => {
+  const completedCall = { type: 'response_item', payload: { type: 'function_call', call_id: 'done', name: 'exec_command', arguments: '{"cmd":"old"}' } };
+  const completedOutput = { type: 'response_item', payload: { type: 'function_call_output', call_id: 'done', output: 'ok' } };
+  assert.equal(parseCodexSession([completedCall, completedOutput], { nowSeconds: NOW }), null);
+  assert.equal(parseCodexSession([completedCall], { nowSeconds: NOW - 700 }), null);
+  assert.equal(parseCodexSession([{ ...completedCall, payload: { ...completedCall.payload, status: 'completed' } }], { nowSeconds: NOW }), null);
+  assert.equal(parseCodexSession([{ type: 'response_item', payload: { type: 'message', content: [{ type: 'text', text: 'done' }] } }], { nowSeconds: NOW }), null);
+});
+
+test('OpenCode muestra solo estados running/streaming y oculta rutas absolutas en el probe', () => {
+  assert.equal(parseOpenCodeMessage(FIXTURES.opencodeCompleted, { nowSeconds: NOW }), null);
+  assert.deepEqual(parseOpenCodeMessage({ content: [
+    { type: 'tool', name: 'read', state: { status: 'completed', input: { path: '/workspace/old.mjs' } }, time: { created: (NOW - 4) * 1000 } },
+    FIXTURES.opencode.content[0],
+  ] }, { nowSeconds: NOW }), { tool: 'shell', target: 'node --test', timestamp: NOW - 1, ageSeconds: 1 });
+  assert.equal(parseOpenCodeMessage({ content: [{ type: 'text', text: 'idle' }] }, { nowSeconds: NOW }), null);
+  assert.equal(parseOpenCodeMessage({ content: [{ type: 'tool', name: 'read', state: { status: 'completed', input: { path: '/workspace/src/probe.mjs' } }, time: { created: NOW * 1000 } }] }, { nowSeconds: NOW }), null);
 });
 
 test('freebuff devuelve Idle si la última tool está completada, es vieja o el JSON está roto', () => {
@@ -129,7 +221,28 @@ test('freebuff devuelve Idle si la última tool está completada, es vieja o el 
 test('deriva ruta relativa al repo y usa fallback ~/ fuera del workspace', () => {
   assert.equal(relativeWorkspaceFile('/repo/src/tmux.mjs', '/repo', '/home/user'), 'src/tmux.mjs');
   assert.equal(relativeWorkspaceFile('/home/user/Infra/file.md', '/repo', '/home/user'), '~/Infra/file.md');
-  assert.equal(relativeWorkspaceFile('/outside/file.md', '/repo', '/home/user'), '/outside/file.md');
+  assert.equal(relativeWorkspaceFile('/outside/file.md', '/repo', '/home/user'), 'file.md');
+});
+
+test('targets de otras tools no publican rutas absolutas y los comandos se aplanan', async () => {
+  const cwd = '/home/tester/Infra';
+  const makeProbe = (tool, input) => async (binary, args) => {
+    if (binary.endsWith('/tmux') && args[0] === 'list-clients') return { stdout: '99\x1finfra\x1f101' };
+    if (binary.endsWith('/tmux')) return { stdout: `%18\x1finfra\x1f1.1\x1fsrc\x1fclaude\x1fTask\x1f${cwd}\x1f123\x1f1792793171` };
+    if (binary.endsWith('/git') && args.at(-1) === '--show-toplevel') return { stdout: `${cwd}\n` };
+    if (binary.endsWith('/git')) return { stdout: 'main\n' };
+    if (binary.endsWith('/tail')) return { stdout: `${JSON.stringify({ cwd, type: 'assistant', timestamp: NOW - 2, message: { content: [{ type: 'tool_use', name: tool, input }] } })}\n` };
+    throw new Error('unexpected command');
+  };
+  const options = { homeDir: '/home/tester', nowSeconds: NOW, stat: async () => ({ mtimeMs: NOW * 1000 }), readdir: async () => [{ name: 'session.jsonl', isFile: () => true, isDirectory: () => false }] };
+  const grep = await collectProbeState({ ...options, execFile: makeProbe('Grep', { path: '/home/tester/secret/file.txt', pattern: 'needle' }) });
+  assert.equal(grep.toolTarget, 'needle');
+  const task = await collectProbeState({ ...options, execFile: makeProbe('Task', { prompt: 'Inspect /home/tester/secret/file.txt' }) });
+  assert.equal(task.toolTarget, 'Inspect file.txt');
+  assert.doesNotMatch(task.toolTarget, /\/home\/tester/);
+  const bash = await collectProbeState({ ...options, execFile: makeProbe('Bash', { command: 'npm test\n/home/tester/secret.txt' }) });
+  assert.equal(bash.toolTarget, 'npm test secret.txt');
+  assert.doesNotMatch(bash.toolTarget, /\n|\/home\/tester/);
 });
 
 test('probe entrega idle y reporta error fatal de tmux', async () => {
@@ -233,6 +346,7 @@ test('una tool Bash usa el cwd del panel y aplana el comando', async () => {
   assert.equal(state.tool, 'Bash');
   assert.equal(state.toolTarget.length, 70);
   assert.doesNotMatch(state.toolTarget, /[\r\n]/);
+  assert.doesNotMatch(state.toolTarget, /\/home\/tester/);
   assert.equal(state.toolAgeSeconds, 4);
   assert.equal(state.workspace, 'Infra');
   assert.equal(state.file, null);

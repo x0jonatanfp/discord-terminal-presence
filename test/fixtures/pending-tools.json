@@ -1,0 +1,85 @@
+{
+  "claude": [
+    "{\"type\":\"assistant\",\"timestamp\":\"2026-10-26T14:19:58.000Z\",\"message\":{\"content\":[{\"type\":\"thinking\",\"thinking\":\"[redacted]\"},{\"type\":\"tool_use\",\"name\":\"Read\",\"input\":{\"file_path\":\"/workspace/src/probe.mjs\"}}]}}"
+  ],
+  "freebuff": {
+    "sessionState": {
+      "mainAgentState": {
+        "messageHistory": [
+          {
+            "role": "assistant",
+            "sentAt": 1793024398000,
+            "content": [
+              { "type": "tool-call", "toolName": "run_terminal_command", "toolCallId": "free-completed", "input": { "command": "node --test" } }
+            ]
+          },
+          { "role": "tool", "toolName": "run_terminal_command", "toolCallId": "free-completed", "content": [{ "type": "json", "value": "[redacted]" }] },
+          {
+            "role": "assistant",
+            "sentAt": 1793024399000,
+            "content": [
+              { "type": "tool-call", "toolName": "read_files", "toolCallId": "free-pending", "input": { "paths": ["src/probe.mjs"] } }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "codex": [
+    {
+      "type": "session_meta",
+      "payload": { "cwd": "/workspace", "cli_version": "0.164.0" }
+    },
+    {
+      "type": "response_item",
+      "timestamp": "2026-10-26T14:19:57.000Z",
+      "payload": {
+        "type": "function_call",
+        "call_id": "codex-completed",
+        "name": "exec_command",
+        "arguments": "{\"cmd\":\"node --test\"}"
+      }
+    },
+    {
+      "type": "response_item",
+      "timestamp": "2026-10-26T14:19:58.000Z",
+      "payload": { "type": "function_call_output", "call_id": "codex-completed", "output": "[redacted]" }
+    },
+    {
+      "type": "response_item",
+      "timestamp": "2026-10-26T14:19:59.000Z",
+      "payload": {
+        "type": "function_call",
+        "call_id": "codex-pending",
+        "name": "exec_command",
+        "arguments": "{\"cmd\":\"node --test\"}"
+      }
+    }
+  ],
+  "opencode": {
+    "time": { "created": 1793024399000 },
+    "agent": "build",
+    "content": [
+      {
+        "type": "tool",
+        "id": "opencode-pending",
+        "name": "shell",
+        "state": { "status": "running", "input": { "command": "node --test" } },
+        "time": { "created": 1793024399000, "ran": 1793024399500 }
+      }
+    ]
+  },
+  "opencodeCompleted": {
+    "time": { "created": 1793024399000 },
+    "agent": "build",
+    "content": [
+      {
+        "type": "tool",
+        "id": "opencode-completed",
+        "name": "read",
+        "state": { "status": "completed", "input": { "path": "src/probe.mjs" }, "content": "[redacted]" },
+        "time": { "created": 1793024399000, "ran": 1793024399500, "completed": 1793024399600 }
+      }
+    ]
+  }
+}
