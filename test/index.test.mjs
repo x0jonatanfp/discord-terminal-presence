@@ -201,6 +201,7 @@ test('--demo-tools rechaza combinación con --once y libera Discord ante error d
   assert.equal(cleanup.activities.at(-1), null);
   assert.equal(cleanup.closed, true);
   assert.match(errors.join(''), /Error en la demo Rich Presence/);
+  assert.doesNotMatch(errors.join(''), /\\n/);
 });
 
 test('un estado idle publica la tarjeta Idle', async (t) => {

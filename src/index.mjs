@@ -53,7 +53,7 @@ async function runToolDemo({ applicationId, assets, discordFactory, sleepFn, sig
     }
     return 0;
   } catch (error) {
-    stderr.write(`Error en la demo Rich Presence: ${error.message}\\n`);
+    stderr.write(`Error en la demo Rich Presence: ${error.message}\n`);
     return 1;
   } finally {
     if (connected) {
