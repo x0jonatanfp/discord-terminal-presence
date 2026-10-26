@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { run } from '../src/index.mjs';
+import { EventEmitter } from 'node:events';
 
 async function configFile(t, { sessionsDir } = {}) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'discord-presence-run-'));
@@ -123,6 +124,83 @@ test('--once informa errores de consulta y devuelve código 1', async (t) => {
   h.options.query = async () => { throw new Error('probe failure'); };
   assert.equal(await run(h.options), 1);
   assert.match(errors.join(''), /Error consultando tmux por SSH: probe failure/);
+});
+
+test('--demo-tools publica una tool simulada por agente y limpia la actividad al terminar', async (t) => {
+  const { file } = await configFile(t);
+  const sent = [];
+  const delays = [];
+  const signals = new EventEmitter();
+  let connectedWith;
+  let closed = false;
+  const discord = {
+    async connect(applicationId) { connectedWith = applicationId; this.connected = true; },
+    setActivity(activity) { sent.push(activity); },
+    close() { closed = true; this.connected = false; },
+  };
+  const h = harness();
+  h.options.argv = ['--demo-tools'];
+  h.options.configPath = file;
+  h.options.signals = signals;
+  h.options.discordFactory = () => discord;
+  h.options.sleepFn = async (ms) => delays.push(ms);
+
+  assert.equal(await run(h.options), 0);
+  assert.equal(connectedWith, 'test-app');
+  assert.deepEqual(sent.slice(0, -1).map((activity) => activity.state), [
+    'Read src/example.mjs',
+    'read_files src/example.mjs',
+    'exec_command npm test',
+    'shell node --test',
+  ]);
+  assert.equal(sent.at(-1), null);
+  assert.deepEqual(delays, [5000, 5000, 5000, 5000]);
+  assert.equal(closed, true);
+  assert.equal(signals.listenerCount('SIGINT'), 0);
+  assert.equal(signals.listenerCount('SIGTERM'), 0);
+});
+
+test('--demo-tools no consulta SSH ni activa el lock del watcher', async (t) => {
+  const h = harness();
+  h.options.argv = ['--demo-tools'];
+  h.options.configPath = (await configFile(t)).file;
+  h.options.query = async () => { throw new Error('no debe consultar SSH'); };
+  h.options.lockClaimer = async () => { throw new Error('no debe reclamar el lock'); };
+  h.options.discordFactory = () => ({
+    async connect() {},
+    setActivity(activity) { if (activity?.state === 'shell node --test') process.emit('SIGINT'); },
+    close() {},
+  });
+  h.options.sleepFn = async () => {};
+  assert.equal(await run(h.options), 0);
+});
+
+test('--demo-tools rechaza combinación con --once y libera Discord ante error de publicación', async (t) => {
+  const h = harness();
+  h.options.argv = ['--demo-tools', '--once'];
+  h.options.configPath = (await configFile(t)).file;
+  const errors = [];
+  h.options.stderr = { write: (text) => errors.push(text) };
+  assert.equal(await run(h.options), 2);
+  assert.match(errors.join(''), /--once \\| --demo-tools/);
+
+  const demo = harness();
+  demo.options.argv = ['--demo-tools'];
+  demo.options.configPath = h.options.configPath;
+  const cleanup = { activities: [], closed: false };
+  demo.options.discordFactory = () => ({
+    async connect() {},
+    setActivity(activity) {
+      cleanup.activities.push(activity);
+      if (activity !== null) throw new Error('Discord set failed');
+    },
+    close() { cleanup.closed = true; },
+  });
+  demo.options.stderr = { write: (text) => errors.push(text) };
+  assert.equal(await run(demo.options), 1);
+  assert.equal(cleanup.activities.at(-1), null);
+  assert.equal(cleanup.closed, true);
+  assert.match(errors.join(''), /Error en la demo Rich Presence/);
 });
 
 test('un estado idle publica la tarjeta Idle', async (t) => {
