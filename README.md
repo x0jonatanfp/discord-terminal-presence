@@ -37,7 +37,7 @@ Copy-Item config.example.json config.json
 node src/index.mjs --once
 ```
 
-`--once` imprime el JSON del probe (incluido `{ "idle": true }` si no hay clientes), no necesita Discord y devuelve código 2 con un mensaje claro si falta la configuración. El watcher normal se lanza desde el perfil `presencia` (ver más abajo); ejecutar `node src/index.mjs` a mano sin ninguna sesión registrada termina en el primer ciclo. Para depurar, usa `--verbose` desde el wrapper o revisa el log.
+`--once` imprime el JSON del probe (incluido `{ "idle": true }` si no hay clientes), no necesita Discord y devuelve código 2 con un mensaje claro si falta la configuración. Para mostrar una demo de cuatro tools simuladas en Discord, ejecuta `node src/index.mjs --demo-tools`: alterna entre Claude, Freebuff, Codex y OpenCode cada cinco segundos, no consulta SSH y limpia la presencia al terminar. Usa `Ctrl+C` para detenerla antes. El watcher normal se lanza desde el perfil `presencia` (ver más abajo); ejecutar `node src/index.mjs` a mano sin ninguna sesión registrada termina en el primer ciclo. Para depurar, usa `--verbose` desde el wrapper o revisa el log.
 
 ## Copiar al PC Windows
 
