@@ -82,14 +82,14 @@ function harness(
 
 test('publica la tool y pasa a Idle tras tres fallos del stream', async (t) => {
   const h = harness([state, new Error('ssh down'), new Error('ssh down'), new Error('ssh down')], {
-    finishWhen: (activity) => activity?.details === 'Idle',
+    finishWhen: (activity) => activity?.details === '💤 Idle',
   });
   h.options.configPath = (await configFile(t)).file;
   await run(h.options);
   assert.equal(h.sent.length, 2);
   assert.equal(h.sent[0].details, 'Claude · repo');
-  assert.equal(h.sent[0].state, 'Edit src/file.mjs');
-  assert.deepEqual(h.sent[1], { details: 'Idle', instance: false });
+  assert.equal(h.sent[0].state, '📝 Working..');
+  assert.deepEqual(h.sent[1], { details: '💤 Idle', instance: false });
   assert.equal(h.logs.filter((line) => line.startsWith('Stream del probe')).length, 3);
 });
 
@@ -148,10 +148,10 @@ test('--demo-tools publica una tool simulada por agente y limpia la actividad al
   assert.equal(await run(h.options), 0);
   assert.equal(connectedWith, 'test-app');
   assert.deepEqual(sent.slice(0, -1).map((activity) => activity.state), [
-    'Read src/example.mjs',
-    'read_files src/example.mjs',
-    'exec_command npm test',
-    'shell node --test',
+    '📖 Working..',
+    '📖 Working..',
+    '💻 Working..',
+    '💻 Working..',
   ]);
   assert.equal(sent.at(-1), null);
   assert.deepEqual(delays, [5000, 5000, 5000, 5000]);
@@ -168,7 +168,7 @@ test('--demo-tools no consulta SSH ni activa el lock del watcher', async (t) => 
   h.options.lockClaimer = async () => { throw new Error('no debe reclamar el lock'); };
   h.options.discordFactory = () => ({
     async connect() {},
-    setActivity(activity) { if (activity?.state === 'shell node --test') process.emit('SIGINT'); },
+    setActivity(activity) { if (activity?.state === '💻 Working..') process.emit('SIGINT'); },
     close() {},
   });
   h.options.sleepFn = async () => {};
@@ -205,10 +205,10 @@ test('--demo-tools rechaza combinación con --once y libera Discord ante error d
 });
 
 test('un estado idle publica la tarjeta Idle', async (t) => {
-  const h = harness([{ ok: true, idle: true }], { finishWhen: (activity) => activity.details === 'Idle' });
+  const h = harness([{ ok: true, idle: true }], { finishWhen: (activity) => activity.details === '💤 Idle' });
   h.options.configPath = (await configFile(t)).file;
   await run(h.options);
-  assert.deepEqual(h.sent, [{ details: 'Idle', instance: false }]);
+  assert.deepEqual(h.sent, [{ details: '💤 Idle', instance: false }]);
 });
 
 test('sin identificador de sesión publica Idle sin abrir el stream', async (t) => {
@@ -216,7 +216,7 @@ test('sin identificador de sesión publica Idle sin abrir el stream', async (t) 
   h.options.configPath = (await configFile(t)).file;
   await run(h.options);
   assert.equal(h.streamOpens, 0);
-  assert.deepEqual(h.sent, [{ details: 'Idle', instance: false }]);
+  assert.deepEqual(h.sent, [{ details: '💤 Idle', instance: false }]);
 });
 
 test('con cero sesiones limpia actividad y termina sin abrir el stream', async (t) => {
@@ -250,7 +250,7 @@ test('con varias sesiones activas el watcher sigue publicando y termina con SIGI
 });
 
 test('un estado inválido del probe no mata el bucle', async (t) => {
-  const h = harness([{ ...state, createdSeconds: -1 }, state], { finishWhen: (activity) => activity.state === 'Edit src/file.mjs' });
+  const h = harness([{ ...state, createdSeconds: -1 }, state], { finishWhen: (activity) => activity.state === '📝 Working..' });
   h.options.configPath = (await configFile(t)).file;
   h.options.sleepFn = async () => {};
   await run(h.options);

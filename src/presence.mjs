@@ -11,26 +11,41 @@ function truncateUtf8(value, maxBytes = 128) {
 }
 
 const AGENT_LABELS = { claude: 'Claude', freebuff: 'Freebuff', opencode: 'OpenCode', codex: 'Codex' };
+const TOOL_ICONS = [
+  ['📖', new Set(['Read', 'read', 'read_file', 'read_files'])],
+  ['📝', new Set(['Edit', 'edit', 'Write', 'write', 'MultiEdit', 'NotebookEdit', 'write_file', 'str_replace', 'apply_patch'])],
+  ['💻', new Set(['Bash', 'bash', 'shell', 'exec_command', 'run_terminal_command', 'write_stdin', 'execute'])],
+  ['🔎', new Set(['Grep', 'grep', 'Glob', 'glob', 'code_search'])],
+  ['🧠', new Set(['Task', 'Agent', 'subagent'])],
+  ['✅', new Set(['TodoWrite', 'write_todos'])],
+  ['🌐', new Set(['WebFetch', 'WebSearch', 'webfetch', 'websearch'])],
+  ['⚡', new Set(['Skill', 'skill'])],
+];
 
 function displayAgent(agent, command) {
   return AGENT_LABELS[agent] ?? (agent === 'shell' ? command : agent);
 }
 
-function displayTool(tool, target) {
-  if (typeof tool !== 'string' || !tool) return 'Idle';
-  if (typeof target !== 'string' || !target) return tool;
-  return tool === 'Bash' ? `${tool} · ${target}` : `${tool} ${target}`;
+function toolIcon(tool) {
+  if (tool.startsWith('mcp__')) return '🔌';
+  return TOOL_ICONS.find(([, names]) => names.has(tool))?.[0] ?? '🛠️';
+}
+
+// No se publica el nombre ni el objetivo: un comando puede contener claves.
+function displayTool(tool) {
+  if (typeof tool !== 'string' || !tool) return '💤 Idle';
+  return `${toolIcon(tool)} Working..`;
 }
 
 export function buildActivity(state, assets = {}) {
   if (state?.idle) {
-    const idle = { details: 'Idle', instance: false };
+    const idle = { details: '💤 Idle', instance: false };
     if (assets.largeImage) {
       idle.assets = { large_image: assets.largeImage, large_text: 'Terminal' };
     }
     return idle;
   }
-  const { session, agent, workspace, tool, toolTarget, title, createdSeconds, command } = state ?? {};
+  const { session, agent, workspace, tool, title, createdSeconds, command } = state ?? {};
   if (![session, agent, workspace].every((value) => typeof value === 'string' && value.length > 0)) {
     throw new TypeError('session, agent y workspace deben ser cadenas no vacías.');
   }
@@ -40,7 +55,7 @@ export function buildActivity(state, assets = {}) {
 
   const agentDisplay = displayAgent(agent, command || agent);
   const details = `${agentDisplay} · ${workspace}`;
-  const stateText = displayTool(tool, toolTarget);
+  const stateText = displayTool(tool);
   const activity = {
     details: truncateUtf8(details),
     state: truncateUtf8(stateText),
