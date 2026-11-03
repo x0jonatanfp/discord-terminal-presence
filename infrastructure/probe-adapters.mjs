@@ -17,7 +17,6 @@ function execute(binary, args, dependencies) {
 export function createProbeAdapters({
   execFile: injectedExecFile = execFile,
   readFile: injectedReadFile = nodeReadFile,
-  transcripts,
 } = {}) {
   const dependencies = { execFile: injectedExecFile, readFile: injectedReadFile };
   const tmux = {
@@ -27,6 +26,9 @@ export function createProbeAdapters({
     activePane(session) {
       const format = '#{pane_id}\x1f#{session_name}\x1f#{window_index}.#{pane_index}\x1f#{window_name}\x1f#{pane_current_command}\x1f#{pane_title}\x1f#{pane_current_path}\x1f#{pane_pid}\x1f#{session_created}';
       return execute(BINARIES.tmux, ['display-message', '-p', '-t', session, format], dependencies);
+    },
+    capturePane(paneId) {
+      return execute(BINARIES.tmux, ['capture-pane', '-p', '-t', paneId, '-S', '-12'], dependencies);
     },
   };
   const processInspector = {
@@ -51,5 +53,5 @@ export function createProbeAdapters({
       } catch { return null; }
     },
   };
-  return { tmux, processInspector, git, transcripts };
+  return { tmux, processInspector, git };
 }

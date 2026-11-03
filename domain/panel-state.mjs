@@ -1,6 +1,13 @@
 import path from 'node:path';
 
 const SEP = '\x1f';
+const COMPLETED_ACTIVITY = /\b(?:worked|cooked)\s+for\b/i;
+const ACTIVITY_SIGNALS = [
+  /\b(?:thinking|working|starting|connecting|initializing|loading|preparing|queued|waiting|generating|processing)\b/i,
+  /\besc(?:ape)?\s*(?:to\s*)?interrupt\b/i,
+  /■\s*esc\b/i,
+  /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/u,
+];
 
 export function parseClients(output) {
   const clients = [];
@@ -23,6 +30,22 @@ export function parseActivePane(output) {
   const pid = Number(panePid);
   if (!Number.isSafeInteger(createdSeconds) || createdSeconds < 0 || !Number.isSafeInteger(pid) || pid < 1) return null;
   return { paneId, session, pane, window, command, title, paneCwd, panePid: pid, createdSeconds };
+}
+
+function cleanTerminalText(value) {
+  return String(value ?? '').replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001b\\))/g, '');
+}
+
+export function detectWorking(capture, paneTitle = '') {
+  const recentLines = cleanTerminalText(capture).split(/\r?\n/).slice(-12).map((line) => line.trim());
+  let lastCompletedLine = -1;
+  for (let index = 0; index < recentLines.length; index += 1) {
+    if (COMPLETED_ACTIVITY.test(recentLines[index])) lastCompletedLine = index;
+  }
+  const currentLines = recentLines.slice(lastCompletedLine + 1);
+  if (currentLines.some((line) => ACTIVITY_SIGNALS.some((pattern) => pattern.test(line)))) return true;
+  const title = cleanTerminalText(paneTitle).trim();
+  return !COMPLETED_ACTIVITY.test(title) && ACTIVITY_SIGNALS.some((pattern) => pattern.test(title));
 }
 
 export function detectAgent(command, childArguments = '') {

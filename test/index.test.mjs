@@ -4,7 +4,6 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { run } from '../src/index.mjs';
-import { EventEmitter } from 'node:events';
 
 async function configFile(t, { sessionsDir } = {}) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'discord-presence-run-'));
@@ -20,8 +19,7 @@ async function configFile(t, { sessionsDir } = {}) {
 
 const state = {
   ok: true, idle: false, session: 'infra', agent: 'claude', title: 'Task', workspace: 'repo',
-  workspacePath: '/repo', branch: 'main', paneCwd: '/home/tester/Infra', tool: 'Edit', toolTarget: 'src/file.mjs',
-  file: 'src/file.mjs', action: 'edit', fileAgeSeconds: 3, createdSeconds: 10,
+  workspacePath: '/repo', branch: 'main', paneCwd: '/home/tester/Infra', working: true, createdSeconds: 10,
 };
 
 function harness(
@@ -80,7 +78,7 @@ function harness(
   };
 }
 
-test('publica la tool y pasa a Idle tras tres fallos del stream', async (t) => {
+test('publica Working y pasa a Idle tras tres fallos del stream', async (t) => {
   const h = harness([state, new Error('ssh down'), new Error('ssh down'), new Error('ssh down')], {
     finishWhen: (activity) => activity?.details === '💤 Idle',
   });
@@ -88,7 +86,7 @@ test('publica la tool y pasa a Idle tras tres fallos del stream', async (t) => {
   await run(h.options);
   assert.equal(h.sent.length, 2);
   assert.equal(h.sent[0].details, 'Claude · repo');
-  assert.equal(h.sent[0].state, '📝 Working..');
+  assert.equal(h.sent[0].state, '💻 Working..');
   assert.deepEqual(h.sent[1], { details: '💤 Idle', instance: false });
   assert.equal(h.logs.filter((line) => line.startsWith('Stream del probe')).length, 3);
 });
@@ -124,84 +122,6 @@ test('--once informa errores de consulta y devuelve código 1', async (t) => {
   h.options.query = async () => { throw new Error('probe failure'); };
   assert.equal(await run(h.options), 1);
   assert.match(errors.join(''), /Error consultando tmux por SSH: probe failure/);
-});
-
-test('--demo-tools publica una tool simulada por agente y limpia la actividad al terminar', async (t) => {
-  const { file } = await configFile(t);
-  const sent = [];
-  const delays = [];
-  const signals = new EventEmitter();
-  let connectedWith;
-  let closed = false;
-  const discord = {
-    async connect(applicationId) { connectedWith = applicationId; this.connected = true; },
-    setActivity(activity) { sent.push(activity); },
-    close() { closed = true; this.connected = false; },
-  };
-  const h = harness();
-  h.options.argv = ['--demo-tools'];
-  h.options.configPath = file;
-  h.options.signals = signals;
-  h.options.discordFactory = () => discord;
-  h.options.sleepFn = async (ms) => delays.push(ms);
-
-  assert.equal(await run(h.options), 0);
-  assert.equal(connectedWith, 'test-app');
-  assert.deepEqual(sent.slice(0, -1).map((activity) => activity.state), [
-    '📖 Working..',
-    '📖 Working..',
-    '💻 Working..',
-    '💻 Working..',
-  ]);
-  assert.equal(sent.at(-1), null);
-  assert.deepEqual(delays, [5000, 5000, 5000, 5000]);
-  assert.equal(closed, true);
-  assert.equal(signals.listenerCount('SIGINT'), 0);
-  assert.equal(signals.listenerCount('SIGTERM'), 0);
-});
-
-test('--demo-tools no consulta SSH ni activa el lock del watcher', async (t) => {
-  const h = harness();
-  h.options.argv = ['--demo-tools'];
-  h.options.configPath = (await configFile(t)).file;
-  h.options.query = async () => { throw new Error('no debe consultar SSH'); };
-  h.options.lockClaimer = async () => { throw new Error('no debe reclamar el lock'); };
-  h.options.discordFactory = () => ({
-    async connect() {},
-    setActivity(activity) { if (activity?.state === '💻 Working..') process.emit('SIGINT'); },
-    close() {},
-  });
-  h.options.sleepFn = async () => {};
-  assert.equal(await run(h.options), 0);
-});
-
-test('--demo-tools rechaza combinación con --once y libera Discord ante error de publicación', async (t) => {
-  const h = harness();
-  h.options.argv = ['--demo-tools', '--once'];
-  h.options.configPath = (await configFile(t)).file;
-  const errors = [];
-  h.options.stderr = { write: (text) => errors.push(text) };
-  assert.equal(await run(h.options), 2);
-  assert.match(errors.join(''), /--once \\| --demo-tools/);
-
-  const demo = harness();
-  demo.options.argv = ['--demo-tools'];
-  demo.options.configPath = h.options.configPath;
-  const cleanup = { activities: [], closed: false };
-  demo.options.discordFactory = () => ({
-    async connect() {},
-    setActivity(activity) {
-      cleanup.activities.push(activity);
-      if (activity !== null) throw new Error('Discord set failed');
-    },
-    close() { cleanup.closed = true; },
-  });
-  demo.options.stderr = { write: (text) => errors.push(text) };
-  assert.equal(await run(demo.options), 1);
-  assert.equal(cleanup.activities.at(-1), null);
-  assert.equal(cleanup.closed, true);
-  assert.match(errors.join(''), /Error en la demo Rich Presence/);
-  assert.doesNotMatch(errors.join(''), /\\n/);
 });
 
 test('un estado idle publica la tarjeta Idle', async (t) => {
@@ -250,7 +170,7 @@ test('con varias sesiones activas el watcher sigue publicando y termina con SIGI
 });
 
 test('un estado inválido del probe no mata el bucle', async (t) => {
-  const h = harness([{ ...state, createdSeconds: -1 }, state], { finishWhen: (activity) => activity.state === '📝 Working..' });
+  const h = harness([{ ...state, createdSeconds: -1 }, state], { finishWhen: (activity) => activity.state === '💻 Working..' });
   h.options.configPath = (await configFile(t)).file;
   h.options.sleepFn = async () => {};
   await run(h.options);

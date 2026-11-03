@@ -36,8 +36,8 @@ test('el stream parsea líneas NDJSON y las entrega en cuanto llegan', () => {
     onError: (error) => errors.push(error),
   });
   child.stdout.emit('data', '{"ok":true,"idle":true}\n{"ok":true,"idle":false');
-  child.stdout.emit('data', ',"tool":"Read"}\n');
-  assert.deepEqual(received, [{ ok: true, idle: true }, { ok: true, idle: false, tool: 'Read' }]);
+  child.stdout.emit('data', ',"working":true}\n');
+  assert.deepEqual(received, [{ ok: true, idle: true }, { ok: true, idle: false, working: true }]);
   assert.equal(errors.length, 0);
   stream.stop();
   assert.equal(child.killed, true);
@@ -104,12 +104,12 @@ test('runSshCommand rechaza por timeout y mata el proceso', async () => {
 });
 
 test('parsea probe activo y rechaza salida JSON inválida o ok false', () => {
-  const active = { ok: true, idle: false, session: 'infra', agent: 'claude', workspace: 'repo', workspacePath: '/repo' };
+  const active = { ok: true, idle: false, session: 'infra', agent: 'claude', workspace: 'repo', workspacePath: '/repo', working: true };
   assert.deepEqual(parseProbeOutput(JSON.stringify(active)), active);
   assert.throws(() => parseProbeOutput('not json'), /JSON válido/);
   assert.throws(() => parseProbeOutput('{"ok":false}'), /ok distinto de true/);
   assert.throws(() => parseProbeOutput('{"ok":true}'), /no informó idle/);
-  assert.throws(() => parseProbeOutput('{"ok":true,"idle":false}'), /campos obligatorios/);
+  assert.throws(() => parseProbeOutput('{"ok":true,"idle":false,"session":"infra","agent":"claude","workspace":"repo","workspacePath":"/repo"}'), /campos obligatorios/);
 });
 
 test('la salida remota idle se acepta', () => {

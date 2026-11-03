@@ -10,22 +10,6 @@ import { claimWatcherLock, defaultSessionsDir, listLiveSessions, newestPresenceI
 const DEFAULT_CONFIG_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'config.json');
 const HEARTBEAT_MS = 60000;
 const MAX_STREAM_FAILURES = 3;
-const DEMO_STEP_MS = 5000;
-const DEMO_TOOL_STATES = [
-  { agent: 'claude', tool: 'Read', toolTarget: 'src/example.mjs' },
-  { agent: 'freebuff', tool: 'read_files', toolTarget: 'src/example.mjs' },
-  { agent: 'codex', tool: 'exec_command', toolTarget: 'npm test' },
-  { agent: 'opencode', tool: 'shell', toolTarget: 'node --test' },
-].map((example) => ({
-  ok: true,
-  idle: false,
-  session: 'demo',
-  workspace: 'tools-demo',
-  workspacePath: '/tools-demo',
-  title: 'Demo de tools',
-  createdSeconds: Math.floor(Date.now() / 1000),
-  ...example,
-}));
 
 function optionValue(argv, option) {
   const index = argv.indexOf(option);
@@ -34,35 +18,6 @@ function optionValue(argv, option) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function runToolDemo({ applicationId, assets, discordFactory, sleepFn, signals, stderr }) {
-  const discord = discordFactory();
-  let connected = false;
-  let stopped = false;
-  const stop = () => { stopped = true; };
-  signals.once('SIGINT', stop);
-  signals.once('SIGTERM', stop);
-  try {
-    await discord.connect(applicationId);
-    connected = true;
-    for (const state of DEMO_TOOL_STATES) {
-      if (stopped) break;
-      discord.setActivity(buildActivity(state, assets));
-      await sleepFn(DEMO_STEP_MS);
-    }
-    return 0;
-  } catch (error) {
-    stderr.write(`Error en la demo Rich Presence: ${error.message}\n`);
-    return 1;
-  } finally {
-    if (connected) {
-      try { discord.setActivity(null); } catch { /* Discord puede cerrarse durante la demo. */ }
-    }
-    discord.close();
-    signals.removeListener('SIGINT', stop);
-    signals.removeListener('SIGTERM', stop);
-  }
 }
 
 export async function run({
@@ -75,34 +30,21 @@ export async function run({
   lockReleaser = releaseWatcherLock, signals = process,
 } = {}) {
   const once = argv.includes('--once');
-  const demoTools = argv.includes('--demo-tools');
   const verbose = argv.includes('--verbose');
   const rawClaimPid = optionValue(argv, '--claim-lock-pid');
   const lockClaimPid = rawClaimPid && /^[0-9]+$/.test(rawClaimPid) ? Number(rawClaimPid) : undefined;
   const sessionsOverride = optionValue(argv, '--sessions-dir');
-  const supportedArgs = new Set(['--once', '--demo-tools', '--verbose', '--claim-lock-pid', '--sessions-dir']);
+  const supportedArgs = new Set(['--once', '--verbose', '--claim-lock-pid', '--sessions-dir']);
   if (argv.some((arg) => arg.startsWith('--') && !supportedArgs.has(arg))
     || argv.some((arg, index) => ['--claim-lock-pid', '--sessions-dir'].includes(arg) && !argv[index + 1])
-    || (rawClaimPid && !lockClaimPid)
-    || (demoTools && (once || rawClaimPid || sessionsOverride))) {
-    stderr.write('Uso: node src/index.mjs [--once | --demo-tools] [--verbose] [--sessions-dir <dir>] [--claim-lock-pid <pid>]\n');
+    || (rawClaimPid && !lockClaimPid)) {
+    stderr.write('Uso: node src/index.mjs [--once] [--verbose] [--sessions-dir <dir>] [--claim-lock-pid <pid>]\n');
     return 2;
   }
 
   let config;
   try { config = await loadConfig(configPath); }
   catch (error) { stderr.write(`${error.message}\n`); return 2; }
-
-  if (demoTools) {
-    return runToolDemo({
-      applicationId: config.applicationId,
-      assets: config.assets,
-      discordFactory,
-      sleepFn,
-      signals,
-      stderr,
-    });
-  }
 
   if (once) {
     try {

@@ -13,7 +13,7 @@ export function parseProbeOutput(output) {
   if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('El probe remoto devolvió un JSON inválido.');
   if (state.ok !== true) throw new Error('El probe remoto informó ok distinto de true.');
   if (typeof state.idle !== 'boolean') throw new Error('El probe remoto no informó idle.');
-  if (!state.idle && (!state.session || !state.agent || !state.workspace || !state.workspacePath)) {
+  if (!state.idle && (!state.session || !state.agent || !state.workspace || !state.workspacePath || typeof state.working !== 'boolean')) {
     throw new Error('El probe remoto omitió campos obligatorios del panel activo.');
   }
   return state;
@@ -70,9 +70,8 @@ export async function runProbe({ ssh, probe, presenceId, timeoutMs = 15000, run 
   return parseProbeOutput(stdout);
 }
 
-// Conexión SSH persistente: el probe remoto vigila las transcripciones y emite
-// una línea JSON cuando cambia el estado. Evita reconectar cada ciclo y da
-// latencia de milisegundos en lugar del polling de 2 s.
+// Conexión SSH persistente: el probe remoto consulta tmux y emite una línea JSON
+// cuando cambia la actividad del panel, sin volver a conectar en cada ciclo.
 export function startProbeStream({ ssh, probe, presenceId, onState, onError, spawn = nodeSpawn } = {}) {
   const command = buildProbeCommand(probe, presenceId, { watch: true });
   const child = spawn(ssh.binary || 'ssh.exe', [
