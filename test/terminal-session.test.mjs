@@ -26,7 +26,7 @@ test('añade el PRESENCE_ID de la pestaña al comando SSH interactivo', () => {
   assert.deepEqual(buildSshArgs(ssh, 'abc-123'), [
     '-t',
     ...buildSshArgs(ssh),
-    'export PRESENCE_ID=abc-123; exec $SHELL -l',
+    'export PRESENCE_ID=abc-123; cat /run/motd.dynamic 2>/dev/null; exec $SHELL -l',
   ]);
 });
 

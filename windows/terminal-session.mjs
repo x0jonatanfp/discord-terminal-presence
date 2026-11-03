@@ -20,7 +20,7 @@ export function buildSshArgs(ssh, presenceId) {
   const args = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', '-o', 'LogLevel=ERROR', '-p', String(ssh.port), `${ssh.user}@${ssh.host}`];
   if (presenceId) {
     args.unshift('-t');
-    args.push(`export PRESENCE_ID=${presenceId}; exec $SHELL -l`);
+    args.push(`export PRESENCE_ID=${presenceId}; cat /run/motd.dynamic 2>/dev/null; exec $SHELL -l`);
   }
   return args;
 }
