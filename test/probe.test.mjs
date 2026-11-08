@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectAgent, detectWorking, parseActivePane, parseClients, collectProbeState, watchProbeState } from '../probe/state.mjs';
+import { detectAgent, detectWorking, parseActivePane, parseClients, collectProbeState, watchProbeState, stopWhenDisconnected } from '../probe/state.mjs';
 import { createProbeAdapters } from '../infrastructure/probe-adapters.mjs';
 
 const NOW = 1793024400;
@@ -156,4 +156,24 @@ test('adapter captura solo las últimas líneas con tmux capture-pane -p', async
   assert.equal(await tmux.capturePane('%18'), 'captured panel\n');
   assert.deepEqual(invocation.args, ['capture-pane', '-p', '-t', '%18', '-S', '-12']);
   assert.equal(invocation.options.encoding, 'utf8');
+});
+
+test('stopWhenDisconnected detiene el probe al cerrarse stdin, stdout o ante EPIPE, una sola vez', async () => {
+  const { PassThrough } = await import('node:stream');
+  for (const trigger of [
+    (stdin) => stdin.end(),
+    (stdin) => stdin.destroy(),
+    (stdin, stdout) => stdout.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })),
+  ]) {
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    let stops = 0;
+    stopWhenDisconnected(() => { stops += 1; }, { stdin, stdout });
+    assert.equal(stops, 0);
+    trigger(stdin, stdout);
+    await new Promise((resolve) => setImmediate(resolve));
+    stdin.destroy();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(stops, 1);
+  }
 });

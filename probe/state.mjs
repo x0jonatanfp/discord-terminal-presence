@@ -67,6 +67,17 @@ export async function watchProbeState({
   };
 }
 
+// Sin TTY, una caída de la conexión SSH no envía SIGHUP: solo cierra stdin/stdout.
+// Se escuchan ambos para que el probe no quede huérfano sondeando tmux para siempre.
+export function stopWhenDisconnected(stop, { stdin = process.stdin, stdout = process.stdout } = {}) {
+  let done = false;
+  const once = () => { if (!done) { done = true; stop(); } };
+  stdin.on('end', once);
+  stdin.on('close', once);
+  stdout.on('error', once);
+  stdin.resume();
+}
+
 export async function main() {
   try {
     const args = process.argv.slice(2);
@@ -79,6 +90,7 @@ export async function main() {
         onState: (state) => process.stdout.write(`${JSON.stringify(state)}\n`),
       });
       const stop = () => { watcher.stop(); process.exit(0); };
+      stopWhenDisconnected(stop);
       process.once('SIGTERM', stop);
       process.once('SIGINT', stop);
       return;
