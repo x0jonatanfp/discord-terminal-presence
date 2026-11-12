@@ -4,7 +4,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { win32 } from 'node:path';
-import { claimWatcherLock, defaultSessionsDir, isProcessAlive, listLiveSessions, newestPresenceId, registerSession, releaseWatcherLock, unregisterSession, watcherLockPath } from '../src/sessions.mjs';
+import { claimWatcherLock, defaultSessionsDir, isProcessAlive, listLiveSessions, livePresenceIds, registerSession, releaseWatcherLock, unregisterSession, watcherLockPath } from '../src/sessions.mjs';
 
 async function tempDirectory(t) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'terminal-sessions-'));
@@ -24,12 +24,15 @@ test('registra y borra un fichero de sesión; directorio ausente o vacío equiva
   await unregisterSession(12345, sessionsDir);
 });
 
-test('registra presenceId y elige el de la sesión más reciente', async (t) => {
+test('registra presenceId y devuelve todos los vivos ordenados, sin duplicados', async (t) => {
   const root = await tempDirectory(t);
   const sessionsDir = path.join(root, 'sessions');
   await registerSession(100, sessionsDir, { presenceId: 'old', startedAt: '2026-01-01T00:00:00.000Z' });
   await registerSession(200, sessionsDir, { presenceId: 'new', startedAt: '2026-01-02T00:00:00.000Z' });
-  assert.equal(await newestPresenceId(sessionsDir, { isAlive: () => true }), 'new');
+  await registerSession(300, sessionsDir, { presenceId: 'new', startedAt: '2026-01-03T00:00:00.000Z' });
+  await registerSession(400, sessionsDir);
+  assert.equal(await livePresenceIds(sessionsDir, { isAlive: (pid) => pid !== 300 && pid !== 999 }), 'new,old');
+  assert.equal(await livePresenceIds(path.join(root, 'vacio'), { isAlive: () => true }), null);
   const record = JSON.parse(await readFile(path.join(sessionsDir, '100.json'), 'utf8'));
   assert.equal(record.presenceId, 'old');
 });

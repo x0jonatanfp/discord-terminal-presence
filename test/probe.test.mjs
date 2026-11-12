@@ -28,9 +28,10 @@ function fakeProbe({ command = 'claude', title = 'Task title', capture = '', cwd
 }
 
 test('parsea cliente más reciente y campos del panel activo', () => {
-  assert.deepEqual(parseClients('bad\n10\x1fold\x1f101\n20\x1finfra\x1f202'), [
-    { activity: 10, session: 'old', pid: 101 },
-    { activity: 20, session: 'infra', pid: 202 },
+  assert.deepEqual(parseClients('bad\n10\x1fold\x1f101\n20\x1finfra\x1f202\x1fattached,focused,UTF-8\n30\x1fx\x1f303\x1fattached,UTF-8'), [
+    { activity: 10, session: 'old', pid: 101, focused: false },
+    { activity: 20, session: 'infra', pid: 202, focused: true },
+    { activity: 30, session: 'x', pid: 303, focused: false },
   ]);
   assert.deepEqual(parseClients(''), []);
   assert.deepEqual(parseActivePane('%18\x1finfra\x1f1.1\x1feditor\x1fclaude\x1fTask\x1f/tmp/repo\x1f123\x1f1792793171'), {

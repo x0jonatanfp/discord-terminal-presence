@@ -92,11 +92,11 @@ export async function listLiveSessions(sessionsDir, options = {}) {
   return (await listLiveSessionRecords(sessionsDir, options)).map((record) => record.pid);
 }
 
-export async function newestPresenceId(sessionsDir, options = {}) {
+// El probe elige entre todas las pestañas vivas; la lista ordenada evita reiniciar el stream sin cambios reales.
+export async function livePresenceIds(sessionsDir, options = {}) {
   const records = await listLiveSessionRecords(sessionsDir, options);
-  const withId = records.filter((record) => typeof record.presenceId === 'string' && record.presenceId);
-  withId.sort((a, b) => String(b.startedAt ?? '').localeCompare(String(a.startedAt ?? '')));
-  return withId[0]?.presenceId ?? null;
+  const ids = [...new Set(records.map((record) => record.presenceId).filter((id) => typeof id === 'string' && id))];
+  return ids.length ? ids.sort().join(',') : null;
 }
 
 async function readLock(lockPath) {

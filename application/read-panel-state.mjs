@@ -7,6 +7,12 @@ function truncate(value, maxChars = 60) {
   return Array.from(String(value ?? '')).slice(0, maxChars).join('');
 }
 
+function compareEntries(a, b) {
+  return (Number(a.working) - Number(b.working))
+    || (Number(a.client.focused) - Number(b.client.focused))
+    || (a.client.activity - b.client.activity);
+}
+
 export async function readPanelState({
   presenceId = null,
   homeDir,
@@ -15,23 +21,27 @@ export async function readPanelState({
   git,
 }) {
   const clients = parseClients(await tmux.listClients());
-  let selected = null;
-  if (presenceId) {
-    const matching = [];
-    for (const client of clients) {
+  const presenceIds = presenceId ? String(presenceId).split(',').filter(Boolean) : [];
+  const candidates = [];
+  for (const client of clients) {
+    if (presenceIds.length) {
       const env = await processInspector.readEnvironment(client.pid);
-      if (env.includes(`PRESENCE_ID=${presenceId}`)) matching.push(client);
+      if (!presenceIds.some((id) => env.includes(`PRESENCE_ID=${id}`))) continue;
     }
-    matching.sort((a, b) => b.activity - a.activity);
-    selected = matching[0] ?? null;
-  } else {
-    clients.sort((a, b) => b.activity - a.activity);
-    selected = clients[0] ?? null;
+    candidates.push(client);
   }
-  if (!selected) return { ok: true, idle: true };
+  if (!candidates.length) return { ok: true, idle: true };
 
-  const pane = parseActivePane(await tmux.activePane(selected.session));
-  if (!pane) throw new Error('tmux devolvió datos inválidos del panel activo.');
+  // Con varias pestañas manda la que trabaja; después la que tiene el foco y, por último, la de actividad más reciente.
+  let selected = null;
+  for (const client of candidates) {
+    const pane = parseActivePane(await tmux.activePane(client.session));
+    if (!pane) throw new Error('tmux devolvió datos inválidos del panel activo.');
+    const capture = await tmux.capturePane(pane.paneId);
+    const entry = { client, pane, capture, working: detectWorking(capture, pane.title) };
+    if (!selected || compareEntries(entry, selected) > 0) selected = entry;
+  }
+  const { pane, working } = selected;
   const executable = path.posix.basename(pane.command).toLowerCase();
   const childArguments = ['claude', 'opencode', 'codex'].includes(executable)
     ? ''
@@ -40,9 +50,6 @@ export async function readPanelState({
   const paneCwd = path.posix.resolve(pane.paneCwd.replace(/^~(?=\/|$)/, homeDir));
   const workspace = await git.workspace(paneCwd)
     ?? { path: paneCwd, name: path.posix.basename(paneCwd) || paneCwd || 'root', branch: null };
-  const capture = await tmux.capturePane(pane.paneId);
-  const working = detectWorking(capture, pane.title);
-
   return {
     ok: true,
     idle: false,

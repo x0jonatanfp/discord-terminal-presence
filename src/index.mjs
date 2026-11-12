@@ -5,7 +5,7 @@ import { createDiscordClient } from './discord-ipc.mjs';
 import { createLogger } from './logger.mjs';
 import { buildActivity } from './presence.mjs';
 import { runProbe, startProbeStream } from './probe-client.mjs';
-import { claimWatcherLock, defaultSessionsDir, listLiveSessions, newestPresenceId, releaseWatcherLock, watcherLockPath } from './sessions.mjs';
+import { claimWatcherLock, defaultSessionsDir, listLiveSessions, livePresenceIds, releaseWatcherLock, watcherLockPath } from './sessions.mjs';
 
 const DEFAULT_CONFIG_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'config.json');
 const HEARTBEAT_MS = 60000;
@@ -26,7 +26,7 @@ export async function run({
   discordFactory = createDiscordClient, loggerFactory = createLogger,
   stdout = process.stdout, stderr = process.stderr, sleepFn = sleep, now = Date.now,
   sessionReader = listLiveSessions, lockClaimer = claimWatcherLock,
-  presenceIdReader = newestPresenceId,
+  presenceIdReader = livePresenceIds,
   lockReleaser = releaseWatcherLock, signals = process,
 } = {}) {
   const once = argv.includes('--once');

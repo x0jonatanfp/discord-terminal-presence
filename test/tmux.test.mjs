@@ -4,12 +4,12 @@ import { parseActivePane, parseClients } from '../probe/state.mjs';
 
 test('parsea clientes tmux e ignora filas malformadas', () => {
   assert.deepEqual(parseClients('malformado\n10old101\nabcbad\n25current202\n'), [
-    { activity: 10, session: 'old', pid: 101 },
-    { activity: 25, session: 'current', pid: 202 },
+    { activity: 10, session: 'old', pid: 101, focused: false },
+    { activity: 25, session: 'current', pid: 202, focused: false },
   ]);
   assert.deepEqual(parseClients('1older101\n2newer202\n'), [
-    { activity: 1, session: 'older', pid: 101 },
-    { activity: 2, session: 'newer', pid: 202 },
+    { activity: 1, session: 'older', pid: 101, focused: false },
+    { activity: 2, session: 'newer', pid: 202, focused: false },
   ]);
 });
 

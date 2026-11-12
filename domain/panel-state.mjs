@@ -13,11 +13,12 @@ export function parseClients(output) {
   const clients = [];
   for (const line of String(output).split(/\r?\n/)) {
     const fields = line.split(SEP);
-    if (fields.length !== 3) continue;
+    if (fields.length !== 3 && fields.length !== 4) continue;
     const activity = Number(fields[0]);
     const pid = Number(fields[2]);
     if (!Number.isSafeInteger(activity) || !fields[1] || !Number.isSafeInteger(pid) || pid < 1) continue;
-    clients.push({ activity, session: fields[1], pid });
+    const focused = (fields[3] ?? '').split(',').includes('focused');
+    clients.push({ activity, session: fields[1], pid, focused });
   }
   return clients;
 }
