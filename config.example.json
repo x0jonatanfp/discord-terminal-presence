@@ -1,14 +1,14 @@
 {
-  "applicationId": "PON_AQUI_EL_APPLICATION_ID",
+  "applicationId": "YOUR_DISCORD_APPLICATION_ID",
   "pollIntervalMs": 2000,
   "ssh": {
     "binary": "ssh.exe",
-    "host": "192.0.2.10",
+    "host": "your-server.example",
     "port": 22,
-    "user": "usuario"
+    "user": "example_user"
   },
   "probe": {
     "node": "/usr/bin/node",
-    "scriptPath": "/home/usuario/Development/extensions/discord-terminal-presence/probe/state.mjs"
+    "scriptPath": "/opt/discord-terminal-presence/probe/state.mjs"
   }
 }
