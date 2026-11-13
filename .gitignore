@@ -10,5 +10,3 @@ node_modules/
 # Logs locales
 *.log
 
-# Metadatos locales de freebuff
-.freebuff/
