@@ -1,0 +1,5 @@
+{
+  "tagPrefix": "v",
+  "noBumpWhenEmptyChanges": true,
+  "releaseCommitMessageFormat": "chore(release): {{currentTag}}"
+}

@@ -5,6 +5,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "release": "npx -y commit-and-tag-version@13.3.0"
   }
 }
