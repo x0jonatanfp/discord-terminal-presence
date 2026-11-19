@@ -1,70 +1,70 @@
 # AGENTS.md · discord-terminal-presence
 
-Guía para agentes de código. Qué es, cómo se instala y cómo se configura está en `README.md` (y `README.es.md`).
+Guide for coding agents. What it is, how it is installed and how it is configured is in `README.md` (and `README.es.md`).
 
-## Qué es
+## What it is
 
-Presencia de Discord (Rich Presence) para el panel de tmux al que estás conectado en un host Linux remoto. Un watcher en Windows, donde vive el named pipe local de Discord, mantiene la tarjeta sincronizada con el panel activo: qué agente de código trabaja y en qué workspace (`Claude · mi-proyecto`, `💻 Working..` o `💤 Idle`). **Nunca publica texto de la conversación**, ni rutas, comandos, PIDs ni el host.
+Discord presence (Rich Presence) for the tmux pane you are connected to on a remote Linux host. A watcher on Windows, where Discord's local named pipe lives, keeps the card in sync with the active pane: which coding agent is working and in which workspace (`Claude · my-project`, `💻 Working..` or `💤 Idle`). **It never publishes conversation text**, nor paths, commands, PIDs or the host.
 
-Proyecto ESM en JavaScript puro: sin dependencias de npm y sin build.
+ESM project in plain JavaScript: no npm dependencies and no build.
 
-## Arquitectura
+## Architecture
 
-Dos mitades que corren en máquinas distintas:
+Two halves that run on different machines:
 
-- **Watcher (Windows).** `src/index.mjs` es el punto de entrada. Mantiene una conexión SSH persistente por conjunto de pestañas, habla con Discord por IPC (`src/discord-ipc.mjs`, named pipe) y construye la actividad (`src/presence.mjs`). `src/probe-client.mjs` lanza el probe por SSH (`buildProbeCommand`, `runProbe`, `startProbeStream`). `src/sessions.mjs` gestiona el registro de sesiones por pestaña (`<pid>.json`) y el lock del watcher. `src/config.mjs` carga `config.json`. `src/logger.mjs` escribe el log.
-- **Probe (host remoto).** `probe/state.mjs` es el punto de entrada remoto (modo una vez o `--watch`). Lee tmux, `/proc`, `ps` y `git`, y emite una línea JSON cuando cambia el estado. No instala nada ni escribe en el host.
-- **Capas compartidas**, que usa el probe:
-  - `domain/panel-state.mjs`: parseo de `tmux list-clients`/panel activo, detección de agente y del estado Working/Idle (funciones puras).
-  - `application/read-panel-state.mjs`: `readPanelState`, orquesta el estado del panel.
-  - `infrastructure/probe-adapters.mjs`: adaptadores que ejecutan tmux, `ps`, `git` y leen `/proc`.
+- **Watcher (Windows).** `src/index.mjs` is the entry point. It keeps a persistent SSH connection per set of tabs, talks to Discord over IPC (`src/discord-ipc.mjs`, named pipe) and builds the activity (`src/presence.mjs`). `src/probe-client.mjs` launches the probe over SSH (`buildProbeCommand`, `runProbe`, `startProbeStream`). `src/sessions.mjs` manages the per-tab session registry (`<pid>.json`) and the watcher lock. `src/config.mjs` loads `config.json`. `src/logger.mjs` writes the log.
+- **Probe (remote host).** `probe/state.mjs` is the remote entry point (one-shot mode or `--watch`). It reads tmux, `/proc`, `ps` and `git`, and emits a JSON line when the state changes. It installs nothing and writes nothing to the host.
+- **Shared layers**, used by the probe:
+  - `domain/panel-state.mjs`: parsing of `tmux list-clients`/active pane, agent detection and the Working/Idle state (pure functions).
+  - `application/read-panel-state.mjs`: `readPanelState`, orchestrates the pane state.
+  - `infrastructure/probe-adapters.mjs`: adapters that run tmux, `ps`, `git` and read `/proc`.
 
-Dependencias: `domain/` y `application/` no importan de `infrastructure/` (comprobado con grep). Los adaptadores se inyectan desde `probe/state.mjs` (`createProbeAdapters`).
+Dependencies: `domain/` and `application/` do not import from `infrastructure/` (checked with grep). The adapters are injected from `probe/state.mjs` (`createProbeAdapters`).
 
-**Importante:** el probe importa `application/` e `infrastructure/`, así que en el host tiene que existir el árbol completo del repo, no solo `probe/`.
+**Important:** the probe imports `application/` and `infrastructure/`, so the full repo tree must exist on the host, not only `probe/`.
 
-## Comandos
+## Commands
 
-| Comando | Qué hace |
+| Command | What it does |
 | --- | --- |
-| `npm test` (o `node --test`) | Ejecuta el suite con `node:test`. |
-| `node src/index.mjs --once` | Lanza una consulta al probe, imprime el JSON y sale. No conecta con Discord. Sale con 2 si falta o es inválida la configuración, y con 1 si falla SSH. |
-| `node src/index.mjs --verbose` | Watcher normal, con el log también en stdout. Úsalo solo para depurar. |
-| `npm run release` | `commit-and-tag-version` (versión, CHANGELOG y etiqueta). |
+| `npm test` (or `node --test`) | Runs the suite with `node:test`. |
+| `node src/index.mjs --once` | Runs one probe query, prints the JSON and exits. It does not connect to Discord. Exits with 2 if the configuration is missing or invalid, and with 1 if SSH fails. |
+| `node src/index.mjs --verbose` | Normal watcher, with the log also on stdout. Use only for debugging. |
+| `npm run release` | `commit-and-tag-version` (version, CHANGELOG and tag). |
 
-Flags de `src/index.mjs`: `--once`, `--verbose`, `--sessions-dir <dir>` y `--claim-lock-pid <pid>` (interno, lo usa el wrapper de Windows Terminal). Cualquier otro flag `--` se rechaza.
+Flags of `src/index.mjs`: `--once`, `--verbose`, `--sessions-dir <dir>` and `--claim-lock-pid <pid>` (internal, used by the Windows Terminal wrapper). Any other `--` flag is rejected.
 
-## Cómo probar un cambio
+## How to test a change
 
-- Tests en `test/*.test.mjs`, con `node:test`. Cubren configuración, sesiones, IPC de Discord, probe, cliente del probe, panel, presencia y el wrapper de Windows Terminal.
-- Los tests usan fakes inyectados para tmux, `ps`, `git`, Discord y SSH. No necesitan Discord, tmux ni un host remoto, y corren en Linux o Windows.
-- Un solo fichero: `node --test test/presence.test.mjs`.
-- Antes de dar un cambio por bueno: `npm test` completo. Todos los tests deben pasar.
-- Cada comportamiento nuevo o bug corregido lleva su test en el mismo cambio. Los clasificadores (`detectWorking`, `detectAgent`) son el sitio donde más se regresa: añade casos positivos y negativos.
+- Tests in `test/*.test.mjs`, with `node:test`. They cover configuration, sessions, Discord IPC, probe, probe client, panel, presence and the Windows Terminal wrapper.
+- The tests use injected fakes for tmux, `ps`, `git`, Discord and SSH. They do not need Discord, tmux or a remote host, and run on Linux or Windows.
+- A single file: `node --test test/presence.test.mjs`.
+- Before accepting a change: the full `npm test`. All tests must pass.
+- Every new behaviour or fixed bug comes with its test in the same change. The classifiers (`detectWorking`, `detectAgent`) are where regressions happen most often: add positive and negative cases.
 
-## Convenciones
+## Conventions
 
-- JavaScript ESM (`"type": "module"`), sin TypeScript ni build. Imports con extensión `.mjs`.
-- Nombres de código en inglés. Documentación: `README.md` en inglés y `README.es.md` en español (el código no tiene comentarios de idioma fijado).
-- Versión y `CHANGELOG.md` los genera `commit-and-tag-version` (`.versionrc.json`) con `npm run release`. **No se editan a mano.**
-- Commits en Conventional Commits, en el estilo del historial.
-- `config.json` (no versionado) a partir de `config.example.json`. El `applicationId` de Discord es público, pero nunca se ponen tokens ni contraseñas en la configuración.
+- JavaScript ESM (`"type": "module"`), no TypeScript or build. Imports with the `.mjs` extension.
+- Code names in English. Documentation: `README.md` in English and `README.es.md` in Spanish (the code does not have a fixed comment language).
+- Version and `CHANGELOG.md` are generated by `commit-and-tag-version` (`.versionrc.json`) with `npm run release`. **Not edited by hand.**
+- Commits in Conventional Commits, in the style of the history.
+- `config.json` (not versioned) based on `config.example.json`. Discord's `applicationId` is public, but tokens or passwords are never put in the configuration.
 
-## Decisiones y trampas
+## Decisions and pitfalls
 
-- **Solo metadatos y estado.** El probe nunca envía texto de la pantalla, títulos, prompts, comandos, nombres de herramientas, rutas, ramas, PIDs, el host ni el usuario de SSH. Cualquier cambio que amplíe lo publicado en Discord debe tratarse como cambio de privacidad.
-- **Detección heurística.** `detectWorking` busca palabras clave (`thinking`, `working`, `generating`...), `esc to interrupt` y caracteres de spinner en las últimas 12 líneas o en el título. Produce falsos positivos y puede dejar un estado `Idle` tras una tarea acabada. Está documentado en el README.
-- **`Worked for` / `Cooked for`.** La actividad anterior a la última de esas líneas se ignora, para no marcar como trabajando una tarea terminada.
-- **Solo el panel activo.** Si hay varias pestañas, el probe prefiere la que trabaja, luego la enfocada y luego la más reciente.
-- **Enfoque.** Se usa `client_flags` de tmux; sin `focus-events on` cae al tiempo de actividad.
-- **Un watcher por directorio de sesiones.** Un lock obsoleto con PID vivo bloquea un segundo watcher, a propósito. No borres un lock cuyo PID siga vivo.
-- **Sin demonio remoto.** Si SSH se cae, el probe sale y el watcher reintenta; tras tres fallos consecutivos para el stream y muestra `Idle`.
-- **Discord solo en Windows.** El IPC usa el named pipe de Windows. Los tests no lo necesitan.
-- **Heartbeat.** Re-envía la misma actividad cada 60 segundos, y el mínimo de `pollIntervalMs` es 2000 ms (valores menores se suben con aviso).
-- **Límite de longitud.** `presence.mjs` trunca los textos a 128 bytes UTF-8; respeta ese límite al añadir campos.
-- **Assets.** El código solo referencia claves de imagen; nunca descarga ni genera imágenes. Las claves distinguen mayúsculas.
+- **Only metadata and state.** The probe never sends screen text, titles, prompts, commands, tool names, paths, branches, PIDs, the host or the SSH user. Any change that widens what is published to Discord must be treated as a privacy change.
+- **Heuristic detection.** `detectWorking` looks for keywords (`thinking`, `working`, `generating`...), `esc to interrupt` and spinner characters in the last 12 lines or in the title. It produces false positives and can leave an `Idle` state after a finished task. This is documented in the README.
+- **`Worked for` / `Cooked for`.** Activity before the last of those lines is ignored, so that a finished task is not marked as working.
+- **Only the active pane.** If there are several tabs, the probe prefers the one that is working, then the focused one, then the most recent one.
+- **Focus.** tmux's `client_flags` is used; without `focus-events on` it falls back to the activity time.
+- **One watcher per sessions directory.** A stale lock with a live PID blocks a second watcher, on purpose. Do not delete a lock whose PID is still alive.
+- **No remote daemon.** If SSH drops, the probe exits and the watcher retries; after three consecutive failures it stops the stream and shows `Idle`.
+- **Discord only on Windows.** The IPC uses the Windows named pipe. The tests do not need it.
+- **Heartbeat.** It re-sends the same activity every 60 seconds, and the minimum `pollIntervalMs` is 2000 ms (lower values are raised with a warning).
+- **Length limit.** `presence.mjs` truncates texts to 128 UTF-8 bytes; respect that limit when adding fields.
+- **Assets.** The code only references image keys; it never downloads or generates images. The keys are case-sensitive.
 
-## Mantenimiento
+## Maintenance
 
-- Este fichero y el `README.md` se actualizan en el mismo cambio que los deja obsoletos.
-- Aquí solo va lo que puede ser público: nada de rutas locales, puertos de la máquina, IPs, perfiles de secretos ni datos personales.
+- This file and the `README.md` are updated in the same change that makes them outdated.
+- Only publishable content goes here: no local paths, machine ports, IPs, secret profiles or personal data.
