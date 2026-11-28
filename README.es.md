@@ -2,11 +2,11 @@
 
 **Español** | [English](README.md)
 
-Presencia enriquecida de Discord para el panel de tmux al que estás conectado en un host Linux remoto. Un pequeño vigilante corre en Windows, donde vive el named pipe local de Discord, y mantiene tu tarjeta de Discord sincronizada con el panel activo de tmux: qué agente de código está trabajando y en qué workspace. Nunca publica texto de la conversación.
+Presencia enriquecida de Discord para el panel de tmux al que estás conectado en un host Linux remoto. Un pequeño vigilante corre en Windows, donde vive el named pipe local de Discord, y mantiene tu tarjeta de Discord sincronizada con los paneles de tmux de la sesión a la que estás conectado: qué agente de código está trabajando y en qué workspace. Nunca publica texto de la conversación.
 
 ## Qué problema resuelve
 
-Cuando trabajas por SSH desde Windows dentro de tmux, Discord solo sabe que hay alguna aplicación abierta. Con varias pestañas y varios agentes (Claude, Codex, OpenCode, Freebuff) es imposible ver de un vistazo cuál está ocupado. Este proyecto lee metadatos de tmux y las últimas líneas del panel activo en el host remoto, clasifica el panel como trabajando o inactivo, y publica solo el nombre del agente, el nombre del workspace y una línea de estado.
+Cuando trabajas por SSH desde Windows dentro de tmux, Discord solo sabe que hay alguna aplicación abierta. Con varias pestañas y varios agentes (Claude, Codex, OpenCode, Freebuff) es imposible ver de un vistazo cuál está ocupado. Este proyecto lee metadatos de tmux y las últimas líneas de los paneles de cada sesión en el host remoto, los clasifica como trabajando o inactivos, y publica solo el nombre del agente, el nombre del workspace y una línea de estado.
 
 La arquitectura tiene dos partes:
 
@@ -151,8 +151,8 @@ Cómo se comporta:
 El probe lee:
 
 - `tmux list-clients`: nombre de sesión, PID del cliente, última actividad y marca de foco.
-- `tmux display-message` del panel activo: id de panel, sesión, ventana, comando, título, directorio actual, PID del panel y fecha de creación de la sesión.
-- `tmux capture-pane -p -S -12`: las últimas 12 líneas del panel activo, sin secuencias de escape ANSI.
+- `tmux list-panes -s -t <sesión>` de todos los paneles de la sesión: id de panel, sesión, ventana, comando, título, directorio actual, PID del panel, fecha de creación de la sesión, actividad de la ventana y si la ventana y el panel están activos.
+- `tmux capture-pane -p -S -12`: las últimas 12 líneas del panel activo y de hasta siete paneles de fondo por sesión que ejecutan un agente conocido (`claude`, `opencode`, `codex`, `freebuff`, `node`), sin secuencias de escape ANSI.
 - `/proc/<pid>/environ` solo para casar el `PRESENCE_ID` de la pestaña.
 - `ps --ppid` para identificar agentes lanzados desde una shell.
 - `git rev-parse --show-toplevel` y `git branch --show-current` en el directorio del panel.
@@ -170,7 +170,7 @@ Nunca publica texto del panel, títulos, prompts, comandos, nombres de tools, ru
 
 - **Detección heurística de actividad.** El clasificador busca palabras como `thinking`, `working`, `starting`, `connecting`, `initializing`, `loading`, `preparing`, `queued`, `waiting`, `generating` o `processing`, la frase `esc to interrupt` y caracteres spinner braille en las últimas 12 líneas o en el título del panel. Las mismas palabras en texto no relacionado de una TUI pueden producir un falso `💻 Working..`; al contrario, una tarea terminada puede quedarse en `Idle` hasta que el panel cambie.
 - **Corte por `Worked for` / `Cooked for`.** La actividad anterior a la última línea de ese tipo se ignora, para no reportar como activa una tarea ya completada.
-- **Solo el panel activo.** Los splits y paneles en segundo plano no se inspeccionan. Con varias pestañas, el probe prefiere la que está trabajando, después la enfocada y por último la de actividad más reciente.
+- **Paneles de agente de la sesión, con tope.** Por cada pestaña el probe lee todos los paneles de su sesión y captura el panel activo y hasta siete paneles de fondo cuyo comando es un agente conocido: 8 capturas por sesión y ciclo, y una sola lectura por sesión aunque la compartan dos pestañas. Un panel de fondo que trabaja gana al panel activo; entre varios paneles que trabajan gana el de la ventana activa y después el de la ventana con actividad más reciente. Un panel de fondo con cualquier otro comando (un editor, una shell pelada) no se inspecciona, así que un agente lanzado desde ahí no se detecta. Con varias pestañas, el probe prefiere la que está trabajando, después la enfocada y por último la de actividad más reciente.
 - **Detección de foco.** Usa `client_flags` de tmux; activa `focus-events on` en tmux para que sea fiable. Sin información de foco recurre a la hora de actividad.
 - **Un vigilante por directorio de sesiones.** Un lock obsoleto con un PID vivo impide arrancar un segundo vigilante; es intencionado.
 - **Solo Windows y Discord Desktop.** El vigilante usa el named pipe de Windows de Discord. Los tests corren en Linux o Windows y no necesitan Discord, SSH ni tmux.
@@ -196,7 +196,7 @@ El proyecto es ESM puro, sin dependencias y sin paso de compilación.
 npm test        # o: node --test
 ```
 
-La suite usa `node:test` con dobles inyectados para tmux, `ps`, `git`, Discord y SSH, así que corre en Linux o Windows sin Discord, tmux ni un host remoto. Todos los tests deben pasar; la suite actual tiene 72 tests.
+La suite usa `node:test` con dobles inyectados para tmux, `ps`, `git`, Discord y SSH, así que corre en Linux o Windows sin Discord, tmux ni un host remoto. Todos los tests deben pasar; la suite actual tiene 81 tests.
 
 Estructura:
 

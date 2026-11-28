@@ -2,11 +2,11 @@
 
 [Español](README.es.md) | **English**
 
-Discord Rich Presence for the tmux pane you are attached to on a remote Linux host. A small watcher runs on Windows, where Discord's local IPC pipe lives, and keeps your Discord card in sync with the active tmux pane: which coding agent is running and in which workspace. It never publishes conversation text.
+Discord Rich Presence for the tmux pane you are attached to on a remote Linux host. A small watcher runs on Windows, where Discord's local IPC pipe lives, and keeps your Discord card in sync with the tmux panes of the session you are attached to: which coding agent is running and in which workspace. It never publishes conversation text.
 
 ## The problem it solves
 
-When you work over SSH from Windows inside tmux, Discord only knows that some application is running. With several terminal tabs and several agents (Claude, Codex, OpenCode, Freebuff) it is impossible to tell at a glance which one is busy. This project reads tmux metadata and the last lines of the active pane on the remote host, classifies the pane as working or idle, and publishes only an agent name, a workspace name and a state line.
+When you work over SSH from Windows inside tmux, Discord only knows that some application is running. With several terminal tabs and several agents (Claude, Codex, OpenCode, Freebuff) it is impossible to tell at a glance which one is busy. This project reads tmux metadata and the last lines of the panes in each session on the remote host, classifies them as working or idle, and publishes only an agent name, a workspace name and a state line.
 
 The architecture has two parts:
 
@@ -151,8 +151,8 @@ How it behaves:
 The probe reads:
 
 - `tmux list-clients`: session name, client PID, last activity and focus flag.
-- `tmux display-message` for the active pane: pane id, session, window, command, title, current directory, pane PID and session creation time.
-- `tmux capture-pane -p -S -12`: the last 12 lines of the active pane, with ANSI escape sequences removed.
+- `tmux list-panes -s -t <session>` for every pane of the session: pane id, session, window, command, title, current directory, pane PID, session creation time, window activity and whether the window and the pane are active.
+- `tmux capture-pane -p -S -12`: the last 12 lines of the active pane and of up to seven background panes per session that run a known agent (`claude`, `opencode`, `codex`, `freebuff`, `node`), with ANSI escape sequences removed.
 - `/proc/<pid>/environ` only to match the tab's `PRESENCE_ID`.
 - `ps --ppid` to identify agent processes started from a shell.
 - `git rev-parse --show-toplevel` and `git branch --show-current` in the pane directory.
@@ -170,7 +170,7 @@ It never publishes pane text, titles, prompts, commands, tool names, file paths,
 
 - **Heuristic activity detection.** The classifier looks for words such as `thinking`, `working`, `starting`, `connecting`, `initializing`, `loading`, `preparing`, `queued`, `waiting`, `generating` or `processing`, for `esc to interrupt`, and for braille spinner characters in the last 12 lines or in the pane title. The same words in unrelated TUI text can produce a false `💻 Working..`; conversely, a finished task can remain `Idle` until the pane changes.
 - **`Worked for` / `Cooked for` cut-off.** Activity before the last such line is ignored, so a completed task is not reported as working.
-- **Only the active pane.** Splits and background panes are not inspected. With several tabs, the probe prefers a tab that is working, then the focused tab, then the most recently active one.
+- **Agent panes of the session, with a cap.** For each tab the probe reads every pane of its session and captures the active pane plus up to seven background panes whose command is a known agent: 8 captures per session and cycle, and one read per session even when two tabs share it. A working background pane wins over the active pane; among several working panes the one in the active window wins, then the most recently active window. A background pane running anything else (an editor, a bare shell) is not inspected, so an agent started from there is not detected. With several tabs, the probe prefers a tab that is working, then the focused tab, then the most recently active one.
 - **Focus detection** uses tmux `client_flags`; enable `focus-events on` in tmux for reliable results. Without focus information it falls back to activity time.
 - **One watcher per session directory.** A stale lock with a live PID prevents a second watcher from starting; this is intentional.
 - **Windows and Discord Desktop only.** The watcher uses Discord's Windows named pipe. The tests run on Linux or Windows and do not need Discord, SSH or tmux.
@@ -196,7 +196,7 @@ The project is plain ESM with no dependencies and no build step.
 npm test        # or: node --test
 ```
 
-The suite uses `node:test` with injected fakes for tmux, `ps`, `git`, Discord and SSH, so it runs on Linux or Windows without Discord, tmux or a remote host. All tests must pass; the current suite has 72 tests.
+The suite uses `node:test` with injected fakes for tmux, `ps`, `git`, Discord and SSH, so it runs on Linux or Windows without Discord, tmux or a remote host. All tests must pass; the current suite has 81 tests.
 
 Layout:
 

@@ -15,7 +15,7 @@ Two halves that run on different machines:
 - **Watcher (Windows).** `src/index.mjs` is the entry point. It keeps a persistent SSH connection per set of tabs, talks to Discord over IPC (`src/discord-ipc.mjs`, named pipe) and builds the activity (`src/presence.mjs`). `src/probe-client.mjs` launches the probe over SSH (`buildProbeCommand`, `runProbe`, `startProbeStream`). `src/sessions.mjs` manages the per-tab session registry (`<pid>.json`) and the watcher lock. `src/config.mjs` loads `config.json`. `src/logger.mjs` writes the log.
 - **Probe (remote host).** `probe/state.mjs` is the remote entry point (one-shot mode or `--watch`). It reads tmux, `/proc`, `ps` and `git`, and emits a JSON line when the state changes. It installs nothing and writes nothing to the host.
 - **Shared layers**, used by the probe:
-  - `domain/panel-state.mjs`: parsing of `tmux list-clients`/active pane, agent detection and the Working/Idle state (pure functions).
+  - `domain/panel-state.mjs`: parsing of `tmux list-clients` and `tmux list-panes -s`, agent detection and the Working/Idle state (pure functions).
   - `application/read-panel-state.mjs`: `readPanelState`, orchestrates the pane state.
   - `infrastructure/probe-adapters.mjs`: adapters that run tmux, `ps`, `git` and read `/proc`.
 
@@ -55,7 +55,7 @@ Flags of `src/index.mjs`: `--once`, `--verbose`, `--sessions-dir <dir>` and `--c
 - **Only metadata and state.** The probe never sends screen text, titles, prompts, commands, tool names, paths, branches, PIDs, the host or the SSH user. Any change that widens what is published to Discord must be treated as a privacy change.
 - **Heuristic detection.** `detectWorking` looks for keywords (`thinking`, `working`, `generating`...), `esc to interrupt` and spinner characters in the last 12 lines or in the title. It produces false positives and can leave an `Idle` state after a finished task. This is documented in the README.
 - **`Worked for` / `Cooked for`.** Activity before the last of those lines is ignored, so that a finished task is not marked as working.
-- **Only the active pane.** If there are several tabs, the probe prefers the one that is working, then the focused one, then the most recent one.
+- **Every pane of the session, with a cap.** For each tab the probe reads `tmux list-panes -s -t <session>` and captures the active pane plus up to seven background panes whose command is a known agent (`claude`, `opencode`, `codex`, `freebuff`, `node`): 8 captures per session and cycle, one read per session even with two tabs on it. A working background pane (a delegated agent in another window) wins over the active pane; among working panes, the active window wins, then the most recently active window; if none works, the active pane. Panes with any other command are not captured, so an agent started from an editor or a bare shell is not detected. Keep the cap and the filter when touching this: the probe runs in a loop.
 - **Focus.** tmux's `client_flags` is used; without `focus-events on` it falls back to the activity time.
 - **One watcher per sessions directory.** A stale lock with a live PID blocks a second watcher, on purpose. Do not delete a lock whose PID is still alive.
 - **No remote daemon.** If SSH drops, the probe exits and the watcher retries; after three consecutive failures it stops the stream and shows `Idle`.
