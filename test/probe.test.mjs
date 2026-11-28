@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectAgent, detectWorking, parseActivePane, parseClients, collectProbeState, watchProbeState, stopWhenDisconnected } from '../probe/state.mjs';
+import { detectAgent, detectWorking, parseClients, parseSessionPanes, collectProbeState, watchProbeState, stopWhenDisconnected } from '../probe/state.mjs';
 import { createProbeAdapters } from '../infrastructure/probe-adapters.mjs';
 
 const NOW = 1793024400;
@@ -10,8 +10,8 @@ function fakeProbe({ command = 'claude', title = 'Task title', capture = '', cwd
   const execFile = async (binary, args) => {
     calls.push({ binary, args });
     if (binary.endsWith('/tmux') && args[0] === 'list-clients') return { stdout: '10\x1fold\x1f101\n20\x1finfra\x1f202\n' };
-    if (binary.endsWith('/tmux') && args[0] === 'display-message') {
-      return { stdout: `%18\x1finfra\x1f1.1\x1feditor\x1f${command}\x1f${title}\x1f${cwd}\x1f123\x1f1792793171` };
+    if (binary.endsWith('/tmux') && args[0] === 'list-panes') {
+      return { stdout: `%18\x1finfra\x1f1.1\x1feditor\x1f${command}\x1f${title}\x1f${cwd}\x1f123\x1f1792793171\x1f1793024400\x1f1\x1f1` };
     }
     if (binary.endsWith('/tmux') && args[0] === 'capture-pane') return { stdout: capture };
     if (binary.endsWith('/ps')) return { stdout: command === 'node' ? 'node /opt/freebuff/bin/cli.js' : '' };
@@ -34,11 +34,12 @@ test('parsea cliente más reciente y campos del panel activo', () => {
     { activity: 30, session: 'x', pid: 303, focused: false },
   ]);
   assert.deepEqual(parseClients(''), []);
-  assert.deepEqual(parseActivePane('%18\x1finfra\x1f1.1\x1feditor\x1fclaude\x1fTask\x1f/tmp/repo\x1f123\x1f1792793171'), {
+  assert.deepEqual(parseSessionPanes('%18\x1finfra\x1f1.1\x1feditor\x1fclaude\x1fTask\x1f/tmp/repo\x1f123\x1f1792793171\x1f1792793200\x1f1\x1f1'), [{
     paneId: '%18', session: 'infra', pane: '1.1', window: 'editor', command: 'claude', title: 'Task',
     paneCwd: '/tmp/repo', panePid: 123, createdSeconds: 1792793171,
-  });
-  assert.equal(parseActivePane('broken'), null);
+    windowActivity: 1792793200, windowActive: true, paneActive: true,
+  }]);
+  assert.deepEqual(parseSessionPanes('broken'), []);
 });
 
 test('detecta los cuatro agentes y shells mediante el comando del pane y sus hijos', () => {
@@ -144,6 +145,19 @@ test('watchProbeState emite solo cambios TUI y deja de emitir al detenerse', asy
   const total = seen.length;
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(seen.length, total);
+});
+
+test('adapter lista los paneles de la sesión con sus marcas de activo', async () => {
+  let invocation;
+  const { tmux } = createProbeAdapters({
+    execFile: async (binary, args) => {
+      invocation = { binary, args };
+      return { stdout: '' };
+    },
+  });
+  await tmux.sessionPanes('agents');
+  assert.deepEqual(invocation.args.slice(0, 5), ['list-panes', '-s', '-t', 'agents', '-F']);
+  assert.match(invocation.args[5], /#\{window_activity\}.#\{window_active\}.#\{pane_active\}$/);
 });
 
 test('adapter captura solo las últimas líneas con tmux capture-pane -p', async () => {

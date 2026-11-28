@@ -4,11 +4,11 @@ import { readFile as nodeReadFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createProbeAdapters } from '../infrastructure/probe-adapters.mjs';
-import { detectAgent, detectWorking, parseActivePane, parseClients, readPanelState } from '../application/read-panel-state.mjs';
+import { detectAgent, detectWorking, parseClients, parseSessionPanes, readPanelState } from '../application/read-panel-state.mjs';
 
 const execFile = promisify(nodeExecFile);
 
-export { detectAgent, detectWorking, parseActivePane, parseClients };
+export { detectAgent, detectWorking, parseClients, parseSessionPanes };
 
 export async function collectProbeState({
   execFile: injectedExecFile = execFile,

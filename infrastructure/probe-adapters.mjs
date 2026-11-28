@@ -23,9 +23,9 @@ export function createProbeAdapters({
     listClients() {
       return execute(BINARIES.tmux, ['list-clients', '-F', '#{client_activity}\x1f#{client_session}\x1f#{client_pid}\x1f#{client_flags}'], dependencies);
     },
-    activePane(session) {
-      const format = '#{pane_id}\x1f#{session_name}\x1f#{window_index}.#{pane_index}\x1f#{window_name}\x1f#{pane_current_command}\x1f#{pane_title}\x1f#{pane_current_path}\x1f#{pane_pid}\x1f#{session_created}';
-      return execute(BINARIES.tmux, ['display-message', '-p', '-t', session, format], dependencies);
+    sessionPanes(session) {
+      const format = '#{pane_id}\x1f#{session_name}\x1f#{window_index}.#{pane_index}\x1f#{window_name}\x1f#{pane_current_command}\x1f#{pane_title}\x1f#{pane_current_path}\x1f#{pane_pid}\x1f#{session_created}\x1f#{window_activity}\x1f#{window_active}\x1f#{pane_active}';
+      return execute(BINARIES.tmux, ['list-panes', '-s', '-t', session, '-F', format], dependencies);
     },
     capturePane(paneId) {
       return execute(BINARIES.tmux, ['capture-pane', '-p', '-t', paneId, '-S', '-12'], dependencies);

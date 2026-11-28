@@ -1,7 +1,11 @@
 import path from 'node:path';
-import { parseActivePane, parseClients, detectAgent, detectWorking } from '../domain/panel-state.mjs';
+import { parseClients, parseSessionPanes, detectAgent, detectWorking } from '../domain/panel-state.mjs';
 
-export { parseActivePane, parseClients, detectAgent, detectWorking };
+export { parseClients, parseSessionPanes, detectAgent, detectWorking };
+
+// De fondo solo se miran los paneles que pueden llevar un agente; el tope acota el coste del bucle.
+const AGENT_COMMANDS = new Set(['claude', 'opencode', 'codex', 'freebuff', 'node', 'nodejs']);
+const MAX_CAPTURED_PANES = 8;
 
 function truncate(value, maxChars = 60) {
   return Array.from(String(value ?? '')).slice(0, maxChars).join('');
@@ -11,6 +15,37 @@ function compareEntries(a, b) {
   return (Number(a.working) - Number(b.working))
     || (Number(a.client.focused) - Number(b.client.focused))
     || (a.client.activity - b.client.activity);
+}
+
+// Con varios paneles trabajando manda el de la ventana activa y, después, el de actividad más reciente.
+function compareWorkingPanes(a, b) {
+  return (Number(a.pane.windowActive) - Number(b.pane.windowActive))
+    || (a.pane.windowActivity - b.pane.windowActivity);
+}
+
+// El panel activo siempre se captura; de fondo, primero las ventanas activas y lo más reciente, hasta el tope.
+function panesToInspect(panes, active) {
+  const background = panes
+    .filter((pane) => pane !== active && AGENT_COMMANDS.has(path.posix.basename(pane.command).toLowerCase()))
+    .sort((a, b) => (Number(b.windowActive) - Number(a.windowActive)) || (b.windowActivity - a.windowActivity))
+    .slice(0, MAX_CAPTURED_PANES - 1);
+  return [active, ...background];
+}
+
+async function readSessionEntry(tmux, session) {
+  const panes = parseSessionPanes(await tmux.sessionPanes(session));
+  if (!panes.length) throw new Error('tmux devolvió datos inválidos de los paneles de la sesión.');
+  const active = panes.find((pane) => pane.windowActive && pane.paneActive) ?? panes[0];
+  let activeEntry = null;
+  let workingEntry = null;
+  for (const pane of panesToInspect(panes, active)) {
+    const capture = await tmux.capturePane(pane.paneId);
+    const entry = { pane, working: detectWorking(capture, pane.title) };
+    if (pane === active) activeEntry = entry;
+    if (entry.working && (!workingEntry || compareWorkingPanes(entry, workingEntry) > 0)) workingEntry = entry;
+  }
+  // Un agente trabajando en una ventana de fondo manda sobre la ventana activa; si ninguno trabaja, se publica la activa.
+  return workingEntry ?? activeEntry;
 }
 
 export async function readPanelState({
@@ -33,12 +68,12 @@ export async function readPanelState({
   if (!candidates.length) return { ok: true, idle: true };
 
   // Con varias pestañas manda la que trabaja; después la que tiene el foco y, por último, la de actividad más reciente.
+  // Cada sesión se lee una vez por ciclo, aunque la compartan varias pestañas.
+  const sessions = new Map();
   let selected = null;
   for (const client of candidates) {
-    const pane = parseActivePane(await tmux.activePane(client.session));
-    if (!pane) throw new Error('tmux devolvió datos inválidos del panel activo.');
-    const capture = await tmux.capturePane(pane.paneId);
-    const entry = { client, pane, capture, working: detectWorking(capture, pane.title) };
+    if (!sessions.has(client.session)) sessions.set(client.session, readSessionEntry(tmux, client.session));
+    const entry = { client, ...(await sessions.get(client.session)) };
     if (!selected || compareEntries(entry, selected) > 0) selected = entry;
   }
   const { pane, working } = selected;

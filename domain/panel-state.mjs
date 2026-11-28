@@ -23,14 +23,27 @@ export function parseClients(output) {
   return clients;
 }
 
-export function parseActivePane(output) {
-  const fields = String(output).trimEnd().split(SEP);
-  if (fields.length !== 9 || fields.some((field, index) => index !== 5 && field === '')) return null;
+function parsePaneFields(fields) {
+  if (fields.some((field, index) => index !== 5 && field === '')) return null;
   const [paneId, session, pane, window, command, title, paneCwd, panePid, created] = fields;
   const createdSeconds = Number(created);
   const pid = Number(panePid);
   if (!Number.isSafeInteger(createdSeconds) || createdSeconds < 0 || !Number.isSafeInteger(pid) || pid < 1) return null;
   return { paneId, session, pane, window, command, title, paneCwd, panePid: pid, createdSeconds };
+}
+
+// Cada línea de `tmux list-panes -s` añade al panel su actividad de ventana y si la ventana y el panel están activos.
+export function parseSessionPanes(output) {
+  const panes = [];
+  for (const line of String(output).split(/\r?\n/)) {
+    const fields = line.split(SEP);
+    if (fields.length !== 12) continue;
+    const pane = parsePaneFields(fields.slice(0, 9));
+    const windowActivity = Number(fields[9]);
+    if (!pane || !Number.isSafeInteger(windowActivity) || windowActivity < 0) continue;
+    panes.push({ ...pane, windowActivity, windowActive: fields[10] === '1', paneActive: fields[11] === '1' });
+  }
+  return panes;
 }
 
 function cleanTerminalText(value) {
