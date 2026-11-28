@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [1.5.0](https://github.com/x0jonatanfp/discord-terminal-presence/compare/v1.4.0...v1.5.0) (2026-11-28)
+
+### Features
+
+* **probe:** la presencia ve al agente que trabaja en otra ventana de la sesión ([9fed89d](https://github.com/x0jonatanfp/discord-terminal-presence/commit/9fed89d94b1018c457658410f6e6cf1687030a9c))
+
 ## 1.4.0 (2026-11-14)
 
 ### Features
